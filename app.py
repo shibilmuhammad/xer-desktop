@@ -43,8 +43,8 @@ st.markdown("""
 <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
     .stDeployButton {display: none;}
+            
     .project-bar {
         background: #f8f9fa;
         padding: 10px 20px;
