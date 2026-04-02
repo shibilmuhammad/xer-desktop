@@ -11,16 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Support both .env (local) and Streamlit secrets (cloud)
-def get_openai_key():
-    key = os.getenv('OPENAI_API_KEY')
-    if not key:
-        try:
-            key = st.secrets.get('OPENAI_API_KEY')
-        except:
-            pass
-    return key
-
-from openai import OpenAI
+import requests
 from xer_analyzer import XERAnalyzer
 
 import sys
@@ -139,96 +130,43 @@ def load_xer_file(uploaded_file, file_type: str = 'baseline') -> dict:
 # AI RESPONSE GENERATION
 # =============================================================================
 
+def ollama_request(system_prompt: str, user_prompt: str, model: str = "llama3") -> str:
+    """Make a local call to Ollama"""
+    url = "http://localhost:11434/api/chat"
+    
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "stream": False
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=30)
+        response.raise_for_status()
+        return response.json().get('message', {}).get('content', "Error: No response from local model.")
+    except Exception as e:
+        return f"Local LLM Error: {str(e)}. Please ensure Ollama is running at localhost:11434"
+
 def get_ai_response(user_query: str) -> str:
-    """Generate response using LLM with code generation"""
+    """Generate response using local LLM for explanation only"""
 
     analyzer = st.session_state.analyzer
-    client = OpenAI(api_key=get_openai_key())
-
-    # Step 1: Get pre-computed basic stats (always available)
-    basic_stats = analyzer.get_basic_stats()
-
-    # Step 2: Generate code to answer the specific question
-    code_gen_prompt = analyzer.get_code_generation_prompt(user_query, basic_stats)
-
-    try:
-        code_response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a Python code generator for Primavera P6 schedule analysis. Generate ONLY valid Python code that sets result = ... at the end. No explanations."
-                },
-                {"role": "user", "content": code_gen_prompt}
-            ],
-            temperature=0.1,
-            max_tokens=2000
-        )
-
-        generated_code = code_response.choices[0].message.content
-
-        # Clean markdown formatting
-        if "```python" in generated_code:
-            generated_code = generated_code.split("```python")[1].split("```")[0]
-        elif "```" in generated_code:
-            generated_code = generated_code.split("```")[1].split("```")[0]
-        generated_code = generated_code.strip()
-
-        # Debug output
-        print("=" * 60)
-        print("GENERATED CODE:")
-        print(generated_code)
-        print("=" * 60)
-
-        # Step 3: Execute the code
-        exec_result = analyzer.execute_code(generated_code)
-
-        code_success = exec_result['success']
-        code_result = exec_result.get('result') if code_success else None
-        code_error = exec_result.get('error') if not code_success else None
-
-        if code_success:
-            print("EXECUTION SUCCESS. Result:", code_result)
-        else:
-            print("EXECUTION FAILED:", code_error)
-
-    except Exception as e:
-        code_success = False
-        code_result = None
-        code_error = str(e)
-        print("CODE GENERATION ERROR:", code_error)
-
-    # Step 4: Generate final response using all available context
-    response_prompt = analyzer.get_response_prompt(user_query, basic_stats, code_result, code_success, code_error)
-
-    try:
-        final_response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": analyzer.get_system_prompt()},
-                {"role": "user", "content": response_prompt}
-            ],
-            temperature=0.3,
-            max_tokens=2000
-        )
-
-        return final_response.choices[0].message.content
-
-    except Exception as e:
-        # Ultimate fallback - return basic stats summary
-        return f"""I encountered an issue generating a detailed response. Here's what I know about your schedule:
-
-**Project:** {basic_stats.get('data_source', 'N/A')}
-**Data Date:** {basic_stats.get('data_date', 'N/A')}
-**Total Activities:** {basic_stats.get('total_activities', 'N/A')}
-
-**Schedule Health:**
-- Critical Activities: {basic_stats.get('critical_count', 'N/A')} ({basic_stats.get('critical_pct', 'N/A')}%)
-- Negative Float: {basic_stats.get('negative_float_count', 'N/A')}
-- Long Duration (>30 days): {basic_stats.get('long_duration_count', 'N/A')}
-- Open-Ended: {basic_stats.get('open_ended_count', 'N/A')}
-
-Error: {str(e)}"""
+    
+    # Step 1: Route query to get structured analysis context
+    analysis_context = analyzer.get_analysis_context(user_query)
+    
+    # Step 2: Formulate prompts for local LLM
+    system_prompt = analyzer.get_system_prompt()
+    user_prompt = analyzer.get_explanation_prompt(user_query, analysis_context)
+    
+    # Step 3: Call Ollama
+    with st.spinner("LLM generating explanation..."):
+        response = ollama_request(system_prompt, user_prompt)
+        
+    return response
 
 
 # =============================================================================
@@ -432,10 +370,6 @@ Ask me anything about your schedule!
 # =============================================================================
 
 def main():
-    if not get_openai_key():
-        st.error("OPENAI_API_KEY not found. Set it in .env (local) or Streamlit secrets (cloud).")
-        st.stop()
-
     if not st.session_state.baseline_loaded:
         show_upload_modal()
     else:

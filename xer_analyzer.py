@@ -240,45 +240,136 @@ class XERDataStore:
         return stats
 
 
-class XERQueryExecutor:
-    """Executes Python code safely against XER data"""
+    def get_tasks_df(self) -> Optional[pd.DataFrame]:
+        """Get tasks dataframe with converted numeric fields"""
+        source = self.get_latest()
+        if not source or 'tasks' not in source.get('df', {}):
+            return None
+        
+        df = source['df']['tasks'].copy()
+        
+        # Standard conversions
+        if 'target_drtn_hr_cnt' in df.columns:
+            df['duration_hrs'] = pd.to_numeric(df['target_drtn_hr_cnt'], errors='coerce').fillna(0)
+            df['duration_days'] = df['duration_hrs'] / self.hours_per_day
+        
+        if 'total_float_hr_cnt' in df.columns:
+            df['float_hrs'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0)
+            df['float_days'] = df['float_hrs'] / self.hours_per_day
+            
+        if 'phys_complete_pct' in df.columns:
+            df['complete_pct'] = pd.to_numeric(df['phys_complete_pct'], errors='coerce').fillna(0)
+            
+        return df
 
-    def __init__(self, data_store: XERDataStore):
-        self.data_store = data_store
+    def get_delay_analysis(self) -> Dict:
+        """Compare baseline vs latest for project delay"""
+        if not self.baseline:
+            return {"error": "No baseline loaded for comparison"}
+        
+        latest = self.get_latest()
+        latest_df = latest['df'].get('tasks')
+        baseline_df = self.baseline['df'].get('tasks')
+        
+        if latest_df is None or baseline_df is None:
+            return {"error": "Task data missing for delay analysis"}
 
-    def execute(self, code: str) -> Dict[str, Any]:
-        """Execute generated code and return results"""
-        try:
-            latest_data = self.data_store.get_latest()
-            baseline_data = self.data_store.get_baseline()
+        # Extract project end dates
+        baseline_finish = str(pd.to_datetime(baseline_df['target_end_date']).max())[:10]
+        latest_finish = str(pd.to_datetime(latest_df['target_end_date']).max())[:10]
+        
+        b_date = pd.to_datetime(baseline_finish)
+        l_date = pd.to_datetime(latest_finish)
+        delay_days = (l_date - b_date).days
+        
+        return {
+            "baseline_finish": baseline_finish,
+            "latest_finish": latest_finish,
+            "delay_days": delay_days,
+            "status": "Delayed" if delay_days > 0 else "On Track" if delay_days == 0 else "Ahead"
+        }
 
-            context = {
-                'pd': pd,
-                'datetime': datetime,
-                'json': json,
-                'baseline': baseline_data,
-                'updates': self.data_store.updates,
-                'latest': latest_data,
-                'get_latest': self.data_store.get_latest,
-                'get_baseline': self.data_store.get_baseline,
-                'get_update_by_date': self.data_store.get_update_by_date,
-                'get_update_by_month': self.data_store.get_update_by_month,
-                'hours_per_day': self.data_store.hours_per_day,
-                'result': None
-            }
+    def get_critical_path_details(self, limit: int = 20) -> List[Dict]:
+        """Get details of critical activities"""
+        df = self.get_tasks_df()
+        if df is None: return []
+        
+        critical = df[df['float_hrs'] <= 0]
+        # Sort by end date to show current critical activities
+        critical = critical.sort_values('target_end_date')
+        
+        return critical.head(limit)[['task_code', 'task_name', 'target_start_date', 'target_end_date', 'float_days']].to_dict('records')
 
-            exec(code, context)
-            result = context.get('result')
+    def get_health_report(self) -> Dict:
+        """Detailed schedule health analysis"""
+        stats = self.compute_basic_stats()
+        df = self.get_tasks_df()
+        
+        if df is None: return stats
+        
+        # Get specific problematic tasks
+        open_ended = stats.get('open_ended_count', 0)
+        negative_float = stats.get('negative_float_count', 0)
+        long_dur = stats.get('long_duration_count', 0)
+        
+        health_data = {
+            "summary": stats,
+            "alerts": []
+        }
+        
+        if negative_float > 0:
+            health_data["alerts"].append(f"Found {negative_float} activities with negative float.")
+        if open_ended > 0:
+            health_data["alerts"].append(f"Found {open_ended} open-ended activities.")
+            
+        return health_data
 
-            if isinstance(result, pd.DataFrame):
-                if len(result) > 50:
-                    result = result.head(50)
-                result = result.to_dict('records')
+    def get_comparison_report(self) -> Dict:
+        """Compare baseline vs latest update in detail"""
+        if not self.baseline or not self.updates:
+            return {"note": "Comparison requires both baseline and at least one update."}
+            
+        b_df = self.baseline['df']['tasks']
+        l_df = self.get_latest()['df']['tasks']
+        
+        # Activity count change
+        diff_count = len(l_df) - len(b_df)
+        
+        return {
+            "baseline_activities": len(b_df),
+            "latest_activities": len(l_df),
+            "net_change": diff_count,
+            "new_activities_count": len(set(l_df['task_code']) - set(b_df['task_code'])),
+            "removed_activities_count": len(set(b_df['task_code']) - set(l_df['task_code']))
+        }
 
-            return {'success': True, 'result': result}
-
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
+    def route_query(self, query: str) -> Dict:
+        """Route user query to the appropriate analysis function"""
+        q = query.lower()
+        
+        context = {"query": query, "basic_stats": self.compute_basic_stats()}
+        
+        if any(word in q for word in ["delay", "behind", "ahead", "finish", "end date"]):
+            context["analysis_type"] = "Delay Analysis"
+            context["data"] = self.get_delay_analysis()
+            
+        elif any(word in q for word in ["critical", "longest path"]):
+            context["analysis_type"] = "Critical Path Analysis"
+            context["data"] = self.get_critical_path_details()
+            
+        elif any(word in q for word in ["health", "quality", "open ended", "dangling", "float", "issue"]):
+            context["analysis_type"] = "Schedule Health"
+            context["data"] = self.get_health_report()
+            
+        elif any(word in q for word in ["compare", "change", "baseline", "different"]):
+            context["analysis_type"] = "Comparison Analysis"
+            context["data"] = self.get_comparison_report()
+            
+        else:
+            context["analysis_type"] = "General Query"
+            context["data"] = "Refer to basic stats"
+            
+        return context
 
 
 class XERAnalyzer:
@@ -286,7 +377,6 @@ class XERAnalyzer:
 
     def __init__(self):
         self.data_store = XERDataStore()
-        self.executor = XERQueryExecutor(self.data_store)
 
     def load_baseline(self, data: Dict, name: str = None, data_date: str = None):
         if name is None:
@@ -309,186 +399,36 @@ class XERAnalyzer:
         """Get pre-computed statistics"""
         return self.data_store.compute_basic_stats()
 
-    def execute_code(self, code: str) -> Dict:
-        return self.executor.execute(code)
+    def get_analysis_context(self, query: str) -> Dict:
+        """Route query and return context for LLM explanation"""
+        return self.data_store.route_query(query)
 
     def get_system_prompt(self) -> str:
-        """Get the system prompt for LLM"""
-        return """You are an expert Primavera P6 Schedule Analyst AI Assistant. You analyze construction project schedules from XER files and provide professional, insightful analysis.
+        """Get the system prompt for local LLM"""
+        return """You are an expert Primavera P6 Schedule Analyst. 
+Your job is to EXPLAIN the structured data provided to you.
 
-YOUR CAPABILITIES:
-1. Analyze schedule quality metrics
-2. Compare baseline vs update files
-3. Identify schedule issues and risks
-4. Provide actionable recommendations
-5. Answer any question about the schedule data
+STRICT RULES:
+1. Do NOT generate Python code.
+2. Do NOT assume data that is not in the JSON provided.
+3. If the JSON is empty or has an error, tell the user you lack the data.
+4. Use professional construction project management terminology.
+5. Be concise and use bullet points for readability.
+6. Do NOT hallucinate specific dates or numbers; only use what is given in the 'Analysis Context'."""
 
-RESPONSE STYLE:
-- Be direct, professional, and precise
-- Include specific numbers and percentages
-- Highlight key findings and concerns
-- Provide recommendations when appropriate
-- Use bullet points for clarity
-- Format tables for comparisons
+    def get_explanation_prompt(self, query: str, context: Dict) -> str:
+        """Generate final prompt for local LLM explanation"""
+        return f"""
+Analyze the following P6 Schedule data to answer the user query.
 
-ANALYSIS APPROACH:
-- Always consider schedule best practices
-- Flag potential issues (negative float, open-ended activities, hard constraints)
-- Interpret data in context of construction project management
-- Suggest improvements when you see problems"""
+USER QUERY: {query}
 
-    def get_code_generation_prompt(self, user_query: str, basic_stats: Dict) -> str:
-        """Generate prompt for code generation"""
+ANALYSIS CONTEXT (JSON):
+{json.dumps(context, indent=2, default=str)}
 
-        source = self.data_store.get_latest()
-
-        # Get column names from actual data
-        columns_info = ""
-        if source and 'df' in source:
-            for table_name, df in list(source['df'].items())[:8]:
-                cols = list(df.columns)[:15]
-                columns_info += f"\n{table_name.upper()}: {', '.join(cols)}"
-
-        return f"""Generate Python code to answer this question about a Primavera P6 schedule.
-
-USER QUESTION: {user_query}
-
-CURRENT PROJECT STATISTICS (always available as fallback):
-{json.dumps(basic_stats, indent=2, default=str)}
-
-AVAILABLE DATA TABLES AND COLUMNS:{columns_info}
-
-AVAILABLE VARIABLES IN CODE:
-- latest: dict with latest schedule data, access DataFrames via latest['df']['table_name']
-- baseline: dict with baseline data, access via baseline['df']['table_name']
-- updates: list of update dicts
-- get_update_by_month('feb'): returns update for that month
-- get_update_by_month('mar'): returns update for that month
-- pd: pandas library
-- hours_per_day: 10 (for duration conversion)
-
-KEY FIELDS:
-- tasks DataFrame: task_id, task_name, task_code, task_type, status_code, target_start_date, target_end_date, act_start_date, act_end_date, target_drtn_hr_cnt (duration in HOURS), total_float_hr_cnt (float in HOURS), phys_complete_pct, cstr_type, cstr_date, wbs_id, clndr_id
-- taskpred DataFrame: task_id, pred_task_id, pred_type (PR_FS, PR_SS, PR_FF, PR_SF), lag_hr_cnt
-- taskrsrc DataFrame: task_id, rsrc_id, target_qty, act_reg_qty, target_cost, act_reg_cost
-- projwbs DataFrame: wbs_id, wbs_name, parent_wbs_id
-- calendar DataFrame: clndr_id, clndr_name, day_hr_cnt, week_hr_cnt
-
-TASK TYPES: TT_Task (regular), TT_Mile (start milestone), TT_FinMile (finish milestone), TT_LOE (level of effort)
-STATUS CODES: TK_NotStart, TK_Active, TK_Complete
-CONSTRAINT TYPES: CS_MSOA, CS_MEOA, CS_MEOB, CS_MSO, CS_MEO
-
-IMPORTANT RULES:
-1. Always use .copy() when modifying DataFrames
-2. ALWAYS convert numeric fields before comparison: pd.to_numeric(df['column'], errors='coerce').fillna(0)
-3. ALL hour/count fields are STRINGS in the data - you MUST convert them to numeric!
-4. Duration is in HOURS, divide by hours_per_day (10) for days
-5. For open-ended: tasks NOT in taskpred['pred_task_id'] (no successor)
-6. For dangling: tasks NOT in taskpred['task_id'] (no predecessor)
-7. Exclude TT_LOE and milestones from most analyses
-8. Store final result in variable named 'result'
-9. Result must be dict, list, or simple value (JSON serializable)
-10. Limit lists to 50 items max
-
-EXAMPLE CODE PATTERNS:
-
-# Get tasks and convert ALL numeric types
-tasks = latest['df']['tasks'].copy()
-tasks['duration_hrs'] = pd.to_numeric(tasks['target_drtn_hr_cnt'], errors='coerce').fillna(0)
-tasks['duration_days'] = tasks['duration_hrs'] / hours_per_day
-tasks['float_hrs'] = pd.to_numeric(tasks['total_float_hr_cnt'], errors='coerce').fillna(0)
-tasks['complete_pct'] = pd.to_numeric(tasks['phys_complete_pct'], errors='coerce').fillna(0)
-
-# Get relationships and convert lag to numeric
-taskpred = latest['df']['taskpred'].copy()
-taskpred['lag_hrs'] = pd.to_numeric(taskpred['lag_hr_cnt'], errors='coerce').fillna(0)
-
-# FS relationships with positive lag
-fs_with_lag = taskpred[(taskpred['pred_type'] == 'PR_FS') & (taskpred['lag_hrs'] > 0)]
-
-# Negative lags (leads)
-negative_lags = taskpred[taskpred['lag_hrs'] < 0]
-
-# Long duration (>30 days)
-long_dur = tasks[tasks['duration_days'] > 30]
-
-# Critical activities
-critical = tasks[tasks['float_hrs'] <= 0]
-
-# Open-ended (no successor)
-has_successor = set(taskpred['pred_task_id'].tolist())
-all_ids = set(tasks['task_id'].tolist())
-open_ended_ids = all_ids - has_successor
-open_ended = tasks[(tasks['task_id'].isin(open_ended_ids)) & (~tasks['task_type'].isin(['TT_LOE', 'TT_Mile', 'TT_FinMile']))]
-
-# Comparing two files
-feb = get_update_by_month('feb')
-mar = get_update_by_month('mar')
-if feb and mar:
-    feb_tasks = feb['df']['tasks'].copy()
-    mar_tasks = mar['df']['tasks'].copy()
-    # comparison logic...
-
-Return ONLY valid Python code. Must set result = ... at the end."""
-
-    def get_response_prompt(self, user_query: str, basic_stats: Dict, code_result: Any, code_success: bool, code_error: str = None) -> str:
-        """Generate prompt for final response"""
-
-        context = f"""USER QUESTION: {user_query}
-
-PROJECT OVERVIEW (always available):
-- Project: {basic_stats.get('data_source', 'N/A')} (Data Date: {basic_stats.get('data_date', 'N/A')})
-- Total Activities: {basic_stats.get('total_activities', 'N/A')}
-- Project Period: {basic_stats.get('project_start', 'N/A')} to {basic_stats.get('project_finish', 'N/A')}
-- Milestones: {basic_stats.get('milestones', 'N/A')}
-- LOE Activities: {basic_stats.get('loe_activities', 'N/A')}
-
-STATUS BREAKDOWN:
-- Completed: {basic_stats.get('completed', 'N/A')}
-- In Progress: {basic_stats.get('in_progress', 'N/A')}
-- Not Started: {basic_stats.get('not_started', 'N/A')}
-
-SCHEDULE HEALTH METRICS:
-- Critical Activities: {basic_stats.get('critical_count', 'N/A')} ({basic_stats.get('critical_pct', 'N/A')}%)
-- Near-Critical: {basic_stats.get('near_critical_count', 'N/A')}
-- Negative Float: {basic_stats.get('negative_float_count', 'N/A')}
-- Open-Ended Activities: {basic_stats.get('open_ended_count', 'N/A')}
-- Dangling Activities: {basic_stats.get('dangling_count', 'N/A')}
-- Long Duration (>30d): {basic_stats.get('long_duration_count', 'N/A')}
-- Constrained Activities: {basic_stats.get('constrained_activities', 'N/A')}
-
-RELATIONSHIPS:
-- Total: {basic_stats.get('total_relationships', 'N/A')}
-- With Lag: {basic_stats.get('relationships_with_lag', 'N/A')}
-- Negative Lags: {basic_stats.get('negative_lags', 'N/A')}
-
-RESOURCE LOADING:
-- Tasks with Resources: {basic_stats.get('tasks_with_resources', 'N/A')} ({basic_stats.get('resource_loaded_pct', 'N/A')}%)
-
-FILES LOADED:
-- Baseline: {basic_stats.get('baseline_name', 'N/A')} ({basic_stats.get('baseline_date', 'N/A')})
-- Updates: {basic_stats.get('update_count', 0)} files
-"""
-
-        if code_success and code_result:
-            context += f"""
-SPECIFIC ANALYSIS RESULTS:
-{json.dumps(code_result, indent=2, default=str)}
-"""
-        elif code_error:
-            context += f"""
-Note: Detailed analysis encountered an issue ({code_error}). Responding based on pre-computed statistics.
-"""
-
-        context += """
 INSTRUCTIONS:
-1. Answer the user's question directly and professionally
-2. Include specific numbers from the data
-3. Highlight any concerns or issues found
-4. Provide recommendations if problems are identified
-5. Be concise but thorough
-6. Use bullet points and formatting for clarity
-7. If the question asks for a list, provide the items found
-8. If comparing files, show clear before/after differences"""
-
-        return context
+- Summarize the key findings from the JSON data.
+- If it's a delay analysis, mention the specific dates and variance.
+- If it's a health report, highlight the specific counts of issues.
+- Provide professional recommendations based ON THIS DATA ONLY.
+"""
