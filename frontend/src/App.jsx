@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { Upload, X, Send, BarChart2, Activity, Calendar, Clock, User } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import logo from './assets/logo.png'
 
 function App() {
   const [baselineLoaded, setBaselineLoaded] = useState(false)
@@ -67,7 +68,18 @@ function App() {
 
   if (!baselineLoaded) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen text-center p-4">
+      <div className="flex flex-col items-center justify-center h-screen text-center p-4 bg-white relative overflow-hidden">
+        {loading && (
+          <div className="absolute inset-0 z-50 bg-white/90 flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in duration-300">
+            <div className="relative">
+              <div className="absolute -inset-4 bg-blue-500/10 rounded-full animate-ping [animation-duration:2s]"></div>
+              <img src={logo} alt="Loading..." className="h-16 relative z-10 animate-pulse" />
+            </div>
+            <p className="mt-8 text-blue-600 font-bold tracking-widest text-xs uppercase animate-pulse">Processing Schedule Data</p>
+          </div>
+        )}
+        
+        <img src={logo} alt="EllisDon Logo" className="h-12 mb-8 object-contain" />
         <h1 className="text-4xl font-bold mb-2">XER Schedule Assistant</h1>
         <p className="text-gray-500 mb-10">Upload your Primavera P6 baseline XER file to begin analysis</p>
         
@@ -91,6 +103,10 @@ function App() {
     <div className="flex h-screen overflow-hidden">
       {/* Sidebar */}
       <div className="w-[300px] bg-[#f8f9fa] border-r border-gray-200 p-6 flex flex-col overflow-y-auto">
+        <div className="mb-10">
+          <img src={logo} alt="EllisDon Logo" className="h-8 object-contain" />
+        </div>
+        
         <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
           <BarChart2 size={20} className="text-blue-600" />
           Project Files
