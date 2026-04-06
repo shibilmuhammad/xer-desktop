@@ -12,3 +12,4 @@ pinned: false
 # XER Schedule AI Assistant
 
 AI-powered chat interface for Primavera P6 schedule analysis.
+# xer-desktop

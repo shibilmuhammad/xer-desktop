@@ -4,6 +4,13 @@
 .env.*.local
 .streamlit/secrets.toml
 
+# Node / JS
+node_modules/
+frontend/node_modules/
+electron/node_modules/
+dist/
+frontend/dist/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -11,6 +18,7 @@ __pycache__/
 *.so
 .Python
 venv/
+venv_desktop/
 ENV/
 
 # IDE
