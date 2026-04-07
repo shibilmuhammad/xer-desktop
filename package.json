@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "scripts": {
     "install-all": "npm install && cd frontend && npm install && cd ../electron && npm install",
-    "dev-backend": "cd backend && ../venv_desktop/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
+    "dev-backend": "node scripts/start-backend.js",
     "dev-frontend": "cd frontend && npm run dev",
     "dev-electron": "cd electron && npm start",
-    "dev": "concurrently \"npm run dev-backend\" \"npm run dev-frontend\" \"wait-on http://localhost:5173 && npm run dev-electron\""
+    "dev": "concurrently \"npm run dev-backend\" \"npm run dev-frontend\" \"npx wait-on http://localhost:5173 && npm run dev-electron\""
   },
   "devDependencies": {
     "concurrently": "^8.2.0",
