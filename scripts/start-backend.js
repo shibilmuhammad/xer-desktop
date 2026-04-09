@@ -24,7 +24,7 @@ const backendDir = path.join(__dirname, '..', 'backend');
 const backend = spawn(pythonPath, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000', '--reload'], {
   cwd: backendDir,
   stdio: 'inherit',
-  shell: false 
+  shell: isWindows 
 });
 
 backend.on('error', (err) => {

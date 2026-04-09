@@ -15,7 +15,7 @@ function createWindow() {
 
   // In development, load from Vite dev server
   // In production, load from build/index.html
-  const startUrl = process.env.ELECTRON_START_URL || 'http://localhost:5173'
+  const startUrl = process.env.ELECTRON_START_URL || 'http://127.0.0.1:5173'
   mainWindow.loadURL(startUrl)
 
   mainWindow.on('closed', function () {

@@ -5,7 +5,7 @@ from typing import Dict, Any, Optional
 from .data_store import XERDataStore
 
 class XERAnalyzer:
-    def __init__(self, ollama_url: str = "http://localhost:11434/v1"):
+    def __init__(self, ollama_url: str = "http://127.0.0.1:11434/v1"):
         self.data_store = XERDataStore()
         self.client = OpenAI(base_url=ollama_url, api_key="ollama")
 
