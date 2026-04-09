@@ -27,6 +27,22 @@ const backend = spawn(pythonPath, ['-m', 'uvicorn', 'main:app', '--host', '127.0
   shell: isWindows 
 });
 
+backend.stdout.on('data', (data) => {
+  console.log(`[Backend-Out]: ${data}`);
+});
+
+backend.stderr.on('data', (data) => {
+  console.error(`[Backend-Err]: ${data}`);
+});
+
 backend.on('error', (err) => {
-  console.error('Failed to start backend:', err);
+  console.error('CRITICAL: Failed to start backend spawn:', err);
+});
+
+backend.on('exit', (code) => {
+  if (code !== 0) {
+    console.error(`\nCRITICAL: Backend process exited with code ${code}`);
+    console.error(`This usually means a Python dependency is missing or there is a port conflict on 8000.`);
+    console.error(`Try running: venv_desktop\\Scripts\\python.exe -m pip install -r backend/requirements.txt\n`);
+  }
 });
