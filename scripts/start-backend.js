@@ -23,7 +23,7 @@ const backendDir = path.join(__dirname, '..', 'backend');
 // but for python.exe, false is generally safer if we provide the full path.
 const backend = spawn(pythonPath, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000', '--reload'], {
   cwd: backendDir,
-  stdio: 'inherit',
+  stdio: 'pipe',
   shell: isWindows 
 });
 
