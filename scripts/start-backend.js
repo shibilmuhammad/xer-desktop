@@ -21,7 +21,7 @@ const backendDir = path.join(__dirname, '..', 'backend');
 // Use shell: false to avoid issues with spaces in paths on Unix/Mac
 // On Windows, shell: true might be needed for some environment variables or paths, 
 // but for python.exe, false is generally safer if we provide the full path.
-const backend = spawn(pythonPath, ['-m', 'uvicorn', 'main:app', '--host', '0.0.0.0', '--port', '8000', '--reload'], {
+const backend = spawn(pythonPath, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000', '--reload'], {
   cwd: backendDir,
   stdio: 'inherit',
   shell: false 
