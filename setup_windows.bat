@@ -36,9 +36,20 @@ if %errorlevel% neq 0 (
 :: 4. Python Virtual Environment
 echo [4/4] Setting up Python virtual environment...
 if not exist "venv_desktop" (
-    python -m venv venv_desktop
-    echo Virtual environment 'venv_desktop' created.
+    echo Attempting to create virtual environment...
+    python -m venv venv_desktop && goto venv_ok
+    py -m venv venv_desktop && goto venv_ok
+    python3 -m venv venv_desktop && goto venv_ok
+    
+    echo.
+    echo ERROR: Could not find 'python', 'py', or 'python3' to create venv.
+    echo Please ensure Python is installed and added to your PATH.
+    pause
+    exit /b 1
 )
+
+:venv_ok
+echo Virtual environment 'venv_desktop' ready.
 
 echo.
 echo Installing Python backend dependencies...
