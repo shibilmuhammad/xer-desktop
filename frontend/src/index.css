@@ -44,3 +44,12 @@
 .markdown-content code {
   @apply bg-gray-100 px-1 rounded text-xs font-mono;
 }
+
+/* Custom Animations */
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin-slow {
+  animation: spin-slow 2s linear infinite;
+}

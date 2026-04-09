@@ -34,18 +34,17 @@ async def upload_xer(file: UploadFile = File(...), file_type: str = Form("baseli
         extractor.extract_all()
         data = extractor.get_complete_data()
         
-        if file_type == "baseline":
-            analyzer.data_store.load_baseline(data, data['project']['project_name'], data['project']['data_date'])
-            print(f"Baseline loaded: {data['project']['project_name']}")
-        else:
-            analyzer.data_store.add_update(data, data['project']['project_name'], data['project']['data_date'])
-            print(f"Update added: {data['project']['project_name']}")
+        version_id = analyzer.data_store.add_version(
+            data, 
+            data['project']['project_name'], 
+            data['project']['data_date'],
+            type=file_type
+        )
+        print(f"Version added: {version_id} ({data['project']['project_name']})")
             
         stats = analyzer.get_basic_stats()
-        print(f"Stats computed: {list(stats.keys())}")
-        
         os.remove(temp_path)
-        return {"success": True, "stats": stats}
+        return {"success": True, "stats": stats, "version_id": version_id}
     except Exception as e:
         print(f"ERROR during upload: {str(e)}")
         if os.path.exists(temp_path): os.remove(temp_path)
@@ -67,8 +66,33 @@ async def get_critical_path():
 
 @app.post("/ask")
 async def ask_question(query: str = Form(...)):
-    response = analyzer.get_ai_response(query)
+    # Use the new modular analytical engine
+    response = analyzer.analyze(query)
     return {"response": response}
+
+@app.get("/versions")
+async def get_versions():
+    """Returns list of all uploaded schedule versions"""
+    versions = []
+    for v in analyzer.data_store.versions.values():
+        versions.append({
+            "id": v["id"],
+            "type": v["type"],
+            "name": v["name"],
+            "data_date": v["data_date"]
+        })
+    # Sort updates by date, baseline first
+    versions.sort(key=lambda x: (0 if x["type"] == "baseline" else 1, x["data_date"]))
+    return versions
+
+@app.get("/xer-data")
+async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, limit: int = 100, version_id: Optional[str] = None):
+    offset = (page - 1) * limit
+    try:
+        data = analyzer.data_store.get_table_data(table, search, limit, offset, source_id=version_id)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
