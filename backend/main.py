@@ -19,6 +19,10 @@ app.add_middleware(
 
 analyzer = XERAnalyzer()
 
+@app.get("/")
+def read_root():
+    return {"status": "ok"}
+
 @app.post("/upload-xer")
 async def upload_xer(file: UploadFile = File(...), file_type: str = Form("baseline")):
     temp_dir = "temp_uploads"
