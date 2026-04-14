@@ -116,9 +116,12 @@ class XERDataStore:
         if 'target_end_date' in tasks_df.columns:
             stats['project_finish'] = str(tasks_df['target_end_date'].dropna().max())[:10]
 
-        # Add the new matrix if we have full analysis
+        # Add the new matrix and health metrics
         analysis = self.get_deterministic_analysis(source['id'])
-        stats['delay_matrix'] = analysis.get('projectSummary', {}).get('delayFloatMatrix', {})
+        summary = analysis.get('projectSummary', {})
+        delay_matrix = summary.get('delayFloatMatrix', {})
+        health_metrics = summary.get('healthMetrics', {})
+        stats['delay_matrix'] = {**delay_matrix, **health_metrics}
 
         self._cached_stats = stats
         return stats
