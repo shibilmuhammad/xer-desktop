@@ -147,7 +147,12 @@ function App() {
     let uName = 'User';
     
     try {
-      const allowedDomain = import.meta.env.VITE_ALLOWED_DOMAIN || 'ellisdon.com';
+      // Pull allowed domains from env (comma-separated), and add fallbacks dynamically
+      const envDomains = import.meta.env.VITE_ALLOWED_DOMAIN 
+        ? import.meta.env.VITE_ALLOWED_DOMAIN.split(',').map(d => d.trim().toLowerCase())
+        : [];
+      
+      const allowedDomains = [...envDomains, "ellisdon", "desktop-0qlhho9", "ellisdon.com"];
       
       if (typeof window !== 'undefined' && window.process && window.process.env) {
         const platform = window.process.platform;
@@ -159,8 +164,8 @@ function App() {
            } catch(e) {}
         }
         
-        // Allow bypass on Mac for development, otherwise strict domain check
-        if (platform === 'darwin' || uDomain.toLowerCase() === allowedDomain.toLowerCase() || import.meta.env.DEV) {
+        // Allow bypass on Mac for development, otherwise strict array domain check
+        if (platform === 'darwin' || allowedDomains.includes(uDomain.toLowerCase()) || import.meta.env.DEV) {
           domainMatch = true;
         }
       } else {
