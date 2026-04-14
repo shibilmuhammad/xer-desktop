@@ -639,75 +639,77 @@ function App() {
         ) : (
           <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50">
             {/* P6 Style Toolbar */}
-            <div className="px-8 py-5 border-b border-gray-200 bg-white flex flex-col md:flex-row gap-6 items-center justify-between">
-              <div className="flex gap-1.5 p-1 bg-gray-100/80 rounded-xl overflow-x-auto max-w-full">
-                {[
-                  { id: 'TASK', label: 'Activities', icon: <Activity size={14} /> },
-                  { id: 'WBS', label: 'WBS', icon: <ListTree size={14} /> },
-                  { id: 'RELATIONSHIPS', label: 'Relationships', icon: <LinkIcon size={14} /> },
-                  { id: 'PROJECT', label: 'Project Info', icon: <Info size={14} /> }
-                ].map(t => (
-                  <button 
-                    key={t.id}
-                    onClick={() => { setViewerTable(t.id); setTablePage(1); }}
-                    className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 ${viewerTable === t.id ? 'bg-white text-blue-700 shadow-sm border border-gray-200/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/50'}`}
-                  >
-                    {t.icon} {t.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex flex-1 gap-4 w-full md:w-auto justify-end items-center">
-                {/* Version Selector Dropdown */}
-                <div className="relative group">
-                   <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 cursor-pointer hover:bg-white transition-all">
-                     <span className="text-[10px] text-gray-400 uppercase">Viewing:</span>
-                     <select 
-                        value={selectedVersionId}
-                        onChange={(e) => { setSelectedVersionId(e.target.value); setTablePage(1); }}
-                        className="bg-transparent border-none outline-none cursor-pointer text-gray-900 pr-2"
-                     >
-                        {versions.map(v => (
-                           <option key={v.id} value={v.id}>
-                              {v.type === 'baseline' ? 'Baseline' : `Update (${v.data_date})`}
-                           </option>
-                        ))}
-                     </select>
-                   </div>
+            <div className="px-8 py-5 border-b border-gray-200 bg-white flex flex-col gap-4">
+              <div className="flex flex-col md:flex-row gap-6 items-center justify-between">
+                <div className="flex gap-1.5 p-1 bg-gray-100/80 rounded-xl overflow-x-auto max-w-full">
+                  {[
+                    { id: 'TASK', label: 'Activities', icon: <Activity size={14} /> },
+                    { id: 'WBS', label: 'WBS', icon: <ListTree size={14} /> },
+                    { id: 'RELATIONSHIPS', label: 'Relationships', icon: <LinkIcon size={14} /> },
+                    { id: 'PROJECT', label: 'Project Info', icon: <Info size={14} /> }
+                  ].map(t => (
+                    <button 
+                      key={t.id}
+                      onClick={() => { setViewerTable(t.id); setTablePage(1); }}
+                      className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 ${viewerTable === t.id ? 'bg-white text-blue-700 shadow-sm border border-gray-200/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/50'}`}
+                    >
+                      {t.icon} {t.label}
+                    </button>
+                  ))}
                 </div>
 
-                <div className="relative flex-1 md:max-w-xs ml-2">
-                  <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input 
-                    type="text"
-                    placeholder="Search by name or ID..."
-                    value={tableSearch}
-                    onChange={(e) => { setTableSearch(e.target.value); setTablePage(1); }}
-                    className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500/20 outline-none transition-all focus:bg-white"
-                  />
-                </div>
-                
-                {viewerTable === 'TASK' && (
-                  <div className="flex flex-wrap gap-2">
-                    {[
-                      { id: 'ALL', label: 'All', color: 'border-gray-200 text-gray-600' },
-                      { id: 'CRITICAL', label: 'Critical (≤0)', color: 'border-red-200 text-red-600 bg-red-50/30' },
-                      { id: 'NEG_FLOAT', label: 'Neg Float', color: 'border-red-400 text-red-800 bg-red-100/50' },
-                      { id: 'DELAYED', label: 'Delayed', color: 'border-orange-200 text-orange-700 bg-orange-50/50' },
-                      { id: 'DELAYED_CRITICAL', label: 'Delay+Crit', color: 'border-red-600 text-red-900 bg-red-100' },
-                      { id: 'DELAYED_NEGATIVE', label: 'Delay+Neg', color: 'border-red-800 text-white bg-red-900' }
-                    ].map(f => (
-                      <button 
-                        key={f.id}
-                        onClick={() => setViewerFilter(f.id)}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter border transition-all ${viewerFilter === f.id ? f.color + ' ring-2 ring-offset-1 focus:ring-blue-500' : 'bg-white border-gray-100 text-gray-400 hover:border-gray-300'}`}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
+                <div className="flex flex-1 gap-4 w-full md:w-auto justify-end items-center">
+                  {/* Version Selector Dropdown */}
+                  <div className="relative group shrink-0">
+                     <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 cursor-pointer hover:bg-white transition-all">
+                       <span className="text-[10px] text-gray-400 uppercase">Viewing:</span>
+                       <select 
+                          value={selectedVersionId}
+                          onChange={(e) => { setSelectedVersionId(e.target.value); setTablePage(1); }}
+                          className="bg-transparent border-none outline-none cursor-pointer text-gray-900 pr-2"
+                       >
+                          {versions.map(v => (
+                             <option key={v.id} value={v.id}>
+                                {v.type === 'baseline' ? 'Baseline' : `Update (${v.data_date})`}
+                             </option>
+                          ))}
+                       </select>
+                     </div>
                   </div>
-                )}
+
+                  <div className="relative flex-1 min-w-[200px] md:max-w-xs ml-2">
+                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input 
+                      type="text"
+                      placeholder="Search by name or ID..."
+                      value={tableSearch}
+                      onChange={(e) => { setTableSearch(e.target.value); setTablePage(1); }}
+                      className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500/20 outline-none transition-all focus:bg-white"
+                    />
+                  </div>
+                </div>
               </div>
+              
+              {viewerTable === 'TASK' && (
+                <div className="flex flex-wrap gap-2 pt-2 pb-1">
+                  {[
+                    { id: 'ALL', label: 'All', color: 'border-gray-200 text-gray-600' },
+                    { id: 'CRITICAL', label: 'Critical (≤0)', color: 'border-red-200 text-red-600 bg-red-50/30' },
+                    { id: 'NEG_FLOAT', label: 'Neg Float', color: 'border-red-400 text-red-800 bg-red-100/50' },
+                    { id: 'DELAYED', label: 'Delayed', color: 'border-orange-200 text-orange-700 bg-orange-50/50' },
+                    { id: 'DELAYED_CRITICAL', label: 'Delay+Crit', color: 'border-red-600 text-red-900 bg-red-100' },
+                    { id: 'DELAYED_NEGATIVE', label: 'Delay+Neg', color: 'border-red-800 text-white bg-red-900' }
+                  ].map(f => (
+                    <button 
+                      key={f.id}
+                      onClick={() => setViewerFilter(f.id)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter border transition-all ${viewerFilter === f.id ? f.color + ' ring-2 ring-offset-1 focus:ring-blue-500' : 'bg-white border-gray-100 text-gray-400 hover:border-gray-300'}`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* P6 Legend & Health Dashboard */}

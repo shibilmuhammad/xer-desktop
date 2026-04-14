@@ -7,7 +7,7 @@
     "dev-backend": "node scripts/start-backend.js",
     "dev-frontend": "cd frontend && npm run dev",
     "dev-electron": "cd electron && npm start",
-    "dev": "concurrently \"npm run dev-backend\" \"npm run dev-frontend\" \"npx wait-on http://127.0.0.1:8000 && npm run dev-electron\""
+    "dev": "concurrently \"npm run dev-backend\" \"npm run dev-frontend\" \"npx wait-on http-get://127.0.0.1:8000/ && npm run dev-electron\""
   },
   "devDependencies": {
     "concurrently": "^8.2.0",
