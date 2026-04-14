@@ -22,9 +22,6 @@ class XERAnalyzer:
         """Maps user query to deterministic backend functions"""
         query = query.lower()
         results = {}
-        
-        # Always include project health for context
-        results['project_health'] = self.get_project_health()
 
         if any(w in query for w in ['delay', 'variance', 'behind', 'finish', 'date', 'late']):
             results['delay_analysis'] = self.calculate_project_delay()
@@ -38,11 +35,16 @@ class XERAnalyzer:
         if any(w in query for w in ['open ended', 'dangling', 'integrity', 'logic', 'missing']):
             results['integrity_checks'] = self.check_open_ended_activities()
         
-        if any(w in query for w in ['quality', 'score', 'health', 'dcma']):
+        if any(w in query for w in ['quality', 'score', 'health', 'dcma', 'overview']):
             results['schedule_quality'] = self.get_schedule_quality()
+            results['project_health'] = self.get_project_health()
             
         if any(w in query for w in ['driver', 'driving', 'cause', 'why']):
             results['delay_drivers'] = self.get_delay_drivers()
+
+        # If we couldn't match anything, provide a default summary
+        if not results:
+            results['general_info'] = "No specific deterministic module triggered. Please ask about delays, critical path, open ends, float, or health."
 
         return results
 
@@ -190,7 +192,7 @@ class XERAnalyzer:
             2. Explain the results concisely using the provided JSON only.
             3. DO NOT perform any math. Simply interpret the 'metrics', 'issues', and 'recommendations'.
             4. Use clear Markdown headings and bullet points.
-            5. Provide a summary of the project health based on the findings.
+            5. ONLY answer what is relevant to the user's specific query. Do not summarize general project health unless it was specifically asked or is the only data provided.
             """
             
             response = self.client.chat.completions.create(
