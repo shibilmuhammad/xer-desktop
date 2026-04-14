@@ -41,10 +41,16 @@ class XERAnalyzer:
             
         if any(w in query for w in ['driver', 'driving', 'cause', 'why']):
             results['delay_drivers'] = self.get_delay_drivers()
+            
+        if any(w in query for w in ['compare', 'difference', 'status', 'summary', 'update', 'both']):
+            results['project_health'] = self.get_project_health()
+            results['delay_analysis'] = self.calculate_project_delay()
+            results['delay_drivers'] = self.get_delay_drivers()
 
-        # If we couldn't match anything, provide a default summary
+        # If we couldn't match anything, assume general summary Instead of failing without data
         if not results:
-            results['general_info'] = "No specific deterministic module triggered. Please ask about delays, critical path, open ends, float, or health."
+            results['project_health'] = self.get_project_health()
+            results['general_info'] = "The user asked a general question. Provide a high-level summary of the schedule's current health and delay standing based on the project_health data. Do not say 'no module triggered'."
 
         return results
 
