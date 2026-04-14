@@ -23,7 +23,10 @@ class XERAnalyzer:
         query = query.lower()
         results = {}
         
-        if any(w in query for w in ['delay', 'variance', 'behind', 'finish', 'date']):
+        # Always include project health for context
+        results['project_health'] = self.get_project_health()
+
+        if any(w in query for w in ['delay', 'variance', 'behind', 'finish', 'date', 'late']):
             results['delay_analysis'] = self.calculate_project_delay()
             
         if any(w in query for w in ['critical', 'longest path', 'driving']):
@@ -34,34 +37,58 @@ class XERAnalyzer:
             
         if any(w in query for w in ['open ended', 'dangling', 'integrity', 'logic', 'missing']):
             results['integrity_checks'] = self.check_open_ended_activities()
+        
+        if any(w in query for w in ['quality', 'score', 'health', 'dcma']):
+            results['schedule_quality'] = self.get_schedule_quality()
             
-        if 'driver' in query or 'driving' in query:
+        if any(w in query for w in ['driver', 'driving', 'cause', 'why']):
             results['delay_drivers'] = self.get_delay_drivers()
 
         return results
 
-    def calculate_project_delay(self) -> Dict[str, Any]:
-        """Calculates project-level delay based on max finish variance"""
+    def get_project_health(self) -> Dict[str, Any]:
+        """Returns the high-level P6 analytical status"""
         analysis = self.data_store.get_deterministic_analysis()
         summary = analysis.get('projectSummary', {})
         metrics = summary.get('healthMetrics', {})
         
-        delay_days = int(summary.get('projectDelayDays', 0))
-        status = "DELAYED" if delay_days > 0 else "ON TRACK"
-        
-        total = metrics.get('totalTasks', 1)
-        completed = metrics.get('completedTasks', 0)
-        pct = (completed / total) * 100 if total > 0 else 0
-        
         return {
-            "summary": f"The project is currently {status} by {delay_days} days.",
+            "score": metrics.get('projectHealthScore', 0),
+            "status": metrics.get('healthStatus', 'Unknown'),
+            "is_constrained": metrics.get('is_constrained', False),
+            "delay_days": summary.get('projectDelayDays', 0),
+            "issues": metrics.get('qualityIssues', [])
+        }
+
+    def calculate_project_delay(self) -> Dict[str, Any]:
+        """Calculates project-level delay based on max finish variance"""
+        health = self.get_project_health()
+        delay_days = health['delay_days']
+        
+        summary_msg = f"The project finish date has shifted by {delay_days} days."
+        if delay_days == 0 and health['is_constrained']:
+            summary_msg = "The project finish date is currently fixed (0-day variance), but significant negative float suggests the schedule is constrained and internally delayed."
+        elif delay_days == 0:
+            summary_msg = "The project is currently on track with 0 days of variance."
+
+        return {
+            "summary": summary_msg,
             "metrics": {
                 "projectDelay": delay_days,
-                "totalTasks": total,
-                "completedPct": f"{pct:.1f}%"
+                "isConstrained": health['is_constrained']
             },
-            "issues": ["Project finish date has slipped relative to baseline."] if delay_days > 0 else [],
-            "recommendations": ["Review critical path activities for acceleration options."] if delay_days > 0 else ["Maintain current progress."]
+            "issues": health['issues'],
+            "recommendations": ["Investigate hidden constraints preventing finish date movement."] if health['is_constrained'] else []
+        }
+
+    def get_schedule_quality(self) -> Dict[str, Any]:
+        """Provides a detailed DCMA-style quality report"""
+        health = self.get_project_health()
+        return {
+            "summary": f"Schedule Quality Score: {health['score']}/100 ({health['status']})",
+            "metrics": {"score": health['score']},
+            "issues": health['issues'],
+            "recommendations": ["Fix open-ended logic to improve critical path reliability."] if health['score'] < 80 else []
         }
 
     def get_critical_path(self) -> Dict[str, Any]:
@@ -97,13 +124,13 @@ class XERAnalyzer:
         analysis = self.data_store.get_deterministic_analysis()
         activity_metrics = analysis.get('activityAnalysis', {})
         
-        neg_float = [tid for tid, obj in activity_metrics.items() if obj.get('status_enum') == "DELAYED"]
+        neg_float = [tid for tid, obj in activity_metrics.items() if (obj.get('float_hrs') or 0) < 0]
         
         return {
             "summary": f"Found {len(neg_float)} activities with negative float.",
             "metrics": {"negativeFloatCount": len(neg_float)},
-            "issues": ["Negative float indicates logic is already behind the current data date."] if neg_float else [],
-            "recommendations": ["Recalculate schedule with actual dates or adjust logic."] if neg_float else []
+            "issues": ["Negative float indicates the project cannot meet its current constraints."] if neg_float else [],
+            "recommendations": ["Verify 'Must Finish By' dates and out-of-sequence progress."] if neg_float else []
         }
 
     def check_open_ended_activities(self) -> Dict[str, Any]:
@@ -142,15 +169,13 @@ class XERAnalyzer:
     def get_delay_drivers(self) -> Dict[str, Any]:
         """Identifies activities causing the most project-level slippage"""
         analysis = self.data_store.get_deterministic_analysis()
-        activity_metrics = analysis.get('activityAnalysis', {})
-        
-        driver_objs = [{"id": tid, "delay": obj['delay_days']} for tid, obj in activity_metrics.items() if obj.get('is_critical_p6')]
-        drivers = sorted(driver_objs, key=lambda x: x['delay'], reverse=True)[:5]
+        summary = analysis.get('projectSummary', {})
+        drivers = summary.get('topDrivers', [])
 
         return {
             "summary": "Top delay drivers identified on the critical path.",
             "metrics": {"impactedDriversCount": len(drivers)},
-            "issues": [f"Activity {d['id']} is driving {d['delay']} days of slippage." for d in drivers],
+            "issues": [f"Activity {d['task_code']} is driving {d['delay_days']} days of slippage." for d in drivers],
             "recommendations": ["Focus schedule recovery efforts on top driving activities."]
         }
 

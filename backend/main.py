@@ -85,6 +85,15 @@ async def get_versions():
     versions.sort(key=lambda x: (0 if x["type"] == "baseline" else 1, x["data_date"]))
     return versions
 
+@app.delete("/versions/{version_id}")
+async def delete_version(version_id: str):
+    """Deletes a specific schedule version"""
+    try:
+        analyzer.data_store.remove_version(version_id)
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/xer-data")
 async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, limit: int = 100, version_id: Optional[str] = None):
     offset = (page - 1) * limit
@@ -96,4 +105,5 @@ async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, lim
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    port = int(os.environ.get("API_PORT", 8000))
+    uvicorn.run(app, host="127.0.0.1", port=port)

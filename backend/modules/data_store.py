@@ -97,6 +97,12 @@ class XERDataStore:
                 stats['critical_count'] = len(critical)
                 stats['critical_pct'] = round(len(critical) / len(work_tasks) * 100, 1)
                 stats['negative_float_count'] = len(work_tasks[work_tasks['float_hrs'] < 0])
+                
+                # Simple delay check for stats (comparing current end to target end)
+                # Note: For full accuracy, the deterministic analysis should be used.
+                if 'target_end_date' in tasks_df.columns and 'act_end_date' in tasks_df.columns:
+                    # Very basic check for stats
+                    pass 
 
         if 'taskpred' in source['df']:
             pred_df = source['df']['taskpred']
@@ -110,110 +116,159 @@ class XERDataStore:
         if 'target_end_date' in tasks_df.columns:
             stats['project_finish'] = str(tasks_df['target_end_date'].dropna().max())[:10]
 
+        # Add the new matrix if we have full analysis
+        analysis = self.get_deterministic_analysis(source['id'])
+        stats['delay_matrix'] = analysis.get('projectSummary', {}).get('delayFloatMatrix', {})
+
         self._cached_stats = stats
         return stats
+
+    def _get_baseline_map(self) -> Dict[str, pd.Timestamp]:
+        """Helper to get task_code -> target_end_date from baseline"""
+        baseline = self.get_baseline()
+        if not baseline or 'df' not in baseline or 'tasks' not in baseline['df']:
+            return {}
+        df = baseline['df']['tasks'].copy()
+        df['_dt_target_end_date'] = pd.to_datetime(df['target_end_date'], errors='coerce')
+        return df.set_index('task_code')['_dt_target_end_date'].to_dict()
 
     def get_deterministic_analysis(self, version_id: Optional[str] = None) -> Dict:
         """
         Pure deterministic schedule analysis based on P6 principles.
-        Calculates status, delays, and critical path metrics.
+        Calculates status, delays (Baseline vs Update), and quality metrics.
         """
         source = self.get_version(version_id)
         if not source or 'df' not in source or 'tasks' not in source['df']:
             return {}
 
         df = source['df']['tasks'].copy()
+        baseline_map = self._get_baseline_map()
         
         # 1. Normalize & Pre-process
-        # Ensure numeric float and durations
         df['float_hrs'] = pd.to_numeric(df.get('total_float_hr_cnt', 0), errors='coerce').fillna(0)
         df['float_days'] = df['float_hrs'] / self.hours_per_day
         
-        # Parse dates
-        # Note: XER stores dates as strings 'YYYY-MM-DD HH:MM'
         date_cols = ['target_start_date', 'target_end_date', 'act_start_date', 'act_end_date']
         for col in date_cols:
             if col in df.columns:
                 df[f'_dt_{col}'] = pd.to_datetime(df[col], errors='coerce')
 
-        # 2. Task Status Calculation (Pure logic)
+        # 2. Status Calculation
         def calc_status(row):
             is_completed = pd.notnull(row.get('_dt_act_end_date'))
             is_in_progress = pd.notnull(row.get('_dt_act_start_date')) and not is_completed
-            is_delayed = row.get('float_hrs', 0) < 0 and not is_completed
-            
             if is_completed: return "COMPLETED"
-            if is_delayed: return "DELAYED"
             if is_in_progress: return "IN_PROGRESS"
             return "NOT_STARTED"
 
         df['status_enum'] = df.apply(calc_status, axis=1)
         df['is_critical_p6'] = df['float_hrs'] <= 0
 
-        # 3. Unified Current End Date Logic (Pure logic)
+        # 2.5. Unified Current End Date Logic
         def get_current_end_date(row):
             act = row.get('_dt_act_end_date')
             plan = row.get('_dt_target_end_date')
             return act if pd.notnull(act) else plan
 
         df['_dt_current_end_date'] = df.apply(get_current_end_date, axis=1)
-        # Store if it's predicted (using planned finish)
         df['is_predicted_date'] = pd.isnull(df['_dt_act_end_date']) & pd.notnull(df['_dt_target_end_date'])
 
-        # Filter out tasks without any end date availability for delay calculations
-        calc_df = df[df['_dt_current_end_date'].notnull()].copy()
-
-        # 4. Task Delay Calculation
-        def calc_delay(row):
-            # If delayed by negative float (active/planned)
-            if row['float_hrs'] < 0 and row['status_enum'] != "COMPLETED":
-                return abs(row['float_days'])
+        # 3. Precision P6 Delay Calculation (BASELINE vs UPDATE PLANNED)
+        def calc_p6_delay(row):
+            code = row.get('task_code')
+            baseline_finish = baseline_map.get(code)
+            current_planned_finish = row.get('_dt_target_end_date')
             
-            baseline_finish = row.get('_dt_target_end_date')
-            current_finish = row.get('_dt_current_end_date')
-            
-            if pd.isnull(baseline_finish) or pd.isnull(current_finish):
+            if pd.isnull(baseline_finish) or pd.isnull(current_planned_finish):
                 return 0
             
-            delay = (current_finish - baseline_finish).days
-            return max(0, delay)
+            delay = (current_planned_finish - baseline_finish).days
+            return delay
 
-        df['delay_days'] = df.apply(calc_delay, axis=1)
+        df['delay_days'] = df.apply(calc_p6_delay, axis=1)
 
-        # 5. Project-Level Aggregates
-        critical_tasks = df[df['is_critical_p6']]
-        analysis_pool = critical_tasks if not critical_tasks.empty else df
-        
-        baseline_max_finish = df['_dt_target_end_date'].max()
-        current_max_finish = df['_dt_current_end_date'].max()
+        # 4. Delay-Float Matrix Logic
+        def classify_matrix(row):
+            delay = row['delay_days']
+            flt = row['float_hrs']
+            if delay > 0:
+                if flt > 0: return "DELAYED_SAFE"
+                if flt == 0: return "DELAYED_CRITICAL"
+                if flt < 0: return "DELAYED_NEGATIVE"
+            return "NORMAL"
+
+        df['delay_float_category'] = df.apply(classify_matrix, axis=1)
+
+        # 5. Project-Level Calculation
+        baseline_max_finish = max(baseline_map.values()) if baseline_map else df['_dt_target_end_date'].max()
+        current_max_finish = df['_dt_target_end_date'].max()
         
         project_delay_days = 0
         if pd.notnull(baseline_max_finish) and pd.notnull(current_max_finish):
             project_delay_days = (current_max_finish - baseline_max_finish).days
 
-        # 6. Project Health Metrics
+        # 6. Schedule Quality Engine
+        total_tasks = len(df)
+        critical_count = len(df[df['is_critical_p6']])
+        neg_float_count = len(df[df['float_hrs'] < 0])
+        
+        crit_pct = (critical_count / total_tasks * 100) if total_tasks > 0 else 0
+        neg_pct = (neg_float_count / total_tasks * 100) if total_tasks > 0 else 0
+        
+        score = 100
+        issues = []
+        
+        if crit_pct > 30: 
+            score -= 15
+            issues.append(f"High Critical Path Activity ({crit_pct:.1f}%)")
+        if neg_pct > 10: 
+            score -= 20
+            issues.append(f"Significant Negative Float ({neg_pct:.1f}%)")
+            
+        is_constrained = False
+        if project_delay_days <= 0 and neg_pct > 15:
+            is_constrained = True
+            score -= 10
+            issues.append("Project delay hidden by constraints (Fixed finish date detected)")
 
-        # 5. Project Health Metrics
+        health_status = "Good"
+        if score < 65: health_status = "Critical"
+        elif score < 85: health_status = "Warning"
+
+        # 7. Root Cause Extraction
+        top_delay_drivers = df[df['delay_days'] > 0].sort_values('delay_days', ascending=False).head(5)
+        top_neg_float = df[df['float_hrs'] < 0].sort_values('float_hrs').head(5)
+
         metrics = {
-            "totalTasks": len(df),
+            "totalTasks": total_tasks,
             "completedTasks": len(df[df['status_enum'] == "COMPLETED"]),
             "inProgressTasks": len(df[df['status_enum'] == "IN_PROGRESS"]),
             "notStartedTasks": len(df[df['status_enum'] == "NOT_STARTED"]),
-            "delayedTasks": len(df[df['status_enum'] == "DELAYED"]),
-            "criticalCount": len(df[df['is_critical_p6']])
+            "delayedTasks": len(df[df['delay_days'] > 0]),
+            "criticalCount": critical_count,
+            "projectHealthScore": score,
+            "healthStatus": health_status,
+            "isConstrained": is_constrained,
+            "qualityIssues": issues
         }
 
-        # 6. Critical Path Detection
-        critical_path_ids = df[df['is_critical_p6']]['task_code'].tolist()
+        matrix_summary = {
+            "total_delayed": metrics["delayedTasks"],
+            "delayed_safe": len(df[df['delay_float_category'] == "DELAYED_SAFE"]),
+            "delayed_critical": len(df[df['delay_float_category'] == "DELAYED_CRITICAL"]),
+            "delayed_negative": len(df[df['delay_float_category'] == "DELAYED_NEGATIVE"])
+        }
 
         return {
             "projectSummary": {
                 "projectDelayDays": project_delay_days,
                 "isDelayed": project_delay_days > 0,
                 "healthMetrics": metrics,
-                "criticalTasksCount": metrics["criticalCount"]
+                "delayFloatMatrix": matrix_summary,
+                "topDrivers": top_delay_drivers[['task_code', 'task_name', 'delay_days']].to_dict('records'),
+                "topRisks": top_neg_float[['task_code', 'task_name', 'float_hrs']].to_dict('records')
             },
-            "activityAnalysis": df[['task_id', 'status_enum', 'delay_days', 'is_critical_p6', 'is_predicted_date', '_dt_current_end_date']].set_index('task_id').to_dict('index')
+            "activityAnalysis": df[['task_id', 'status_enum', 'delay_days', 'float_hrs', 'delay_float_category', 'is_critical_p6', 'is_predicted_date', '_dt_current_end_date']].set_index('task_id').to_dict('index')
         }
 
     def calculate_project_delay(self) -> Dict:
