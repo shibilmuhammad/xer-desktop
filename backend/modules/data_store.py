@@ -241,8 +241,8 @@ class XERDataStore:
         elif score < 85: health_status = "Warning"
 
         # 7. Root Cause Extraction
-        top_delay_drivers = df[df['delay_days'] > 0].sort_values('delay_days', ascending=False).head(5)
-        top_neg_float = df[df['float_hrs'] < 0].sort_values('float_hrs').head(5)
+        top_delay_drivers = df[df['delay_days'] > 0].sort_values('delay_days', ascending=False).head(20)
+        top_neg_float = df[df['float_hrs'] < 0].sort_values('float_hrs').head(20)
 
         metrics = {
             "totalTasks": total_tasks,

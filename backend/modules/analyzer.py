@@ -254,7 +254,7 @@ class XERAnalyzer:
         
         critical_ids = [tid for tid, obj in activity_metrics.items() if obj.get('is_critical_p6')]
         critical_list = []
-        for tid in critical_ids[:15]:  # Top 15 to avoid token bloat
+        for tid in critical_ids[:20]:  # Top 20 to avoid token bloat
             act = activity_metrics[tid]
             critical_list.append({
                 "id": tid,
@@ -290,7 +290,7 @@ class XERAnalyzer:
         sorted_ids = sorted(neg_float_ids, key=lambda tid: activity_metrics[tid].get('float_hrs', 0))
         
         risky_list = []
-        for tid in sorted_ids[:15]:
+        for tid in sorted_ids[:20]:
             act = activity_metrics[tid]
             flt = act.get('float_hrs', 0)
             level = "Extreme Risk" if flt < -200 else "High Risk" if flt < -100 else "Medium Risk"
