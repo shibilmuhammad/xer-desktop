@@ -60,6 +60,7 @@ class XERAnalyzer:
         1. Always use provided tools to fetch grounded facts.
         2. DO NOT just list numbers. Explain the causal relationship (e.g., 'Activity A is driving the critical path; its delay has eroded the project's buffer').
         3. Use professional terminology: "Concurrent delay", "Driving relationship", "Logic trace", "Float consumption", "Status variance".
+        4. **Detailed Listing**: When asked to list high-risk or delayed activities, use the 'data' field in tool results to provide a structured table or list including Activity ID, Name, and Level (e.g., Extreme Risk, Critical).
         
         For general questions, use your PMBOK/P6 expertise to provide best-practice guidance.
         """
@@ -105,7 +106,7 @@ class XERAnalyzer:
             
         messages.append({
             "role": "system", 
-            "content": "Return the final analysis STRICTLY as a JSON object. The 'summary' must be a professional executive summary with analytical depth (use Markdown for bolding/emphasis). The 'metrics' should be numerical KPIs. The 'insights' should be strategic findings. Schema: {\"summary\": \"...\", \"metrics\": {...}, \"insights\": [...], \"drivers\": [...]}"
+            "content": "Return the final analysis STRICTLY as a JSON object. The 'summary' must be a professional executive summary with analytical depth (use Markdown for bolding/emphasis). If the user asked for a list, include the detailed list of activities in the summary using Markdown tables. The 'metrics' should be numerical KPIs. The 'insights' should be strategic findings. Schema: {\"summary\": \"...\", \"metrics\": {...}, \"insights\": [...], \"drivers\": [...]}"
         })
         
         final_response = self.client.chat.completions.create(
@@ -252,25 +253,28 @@ class XERAnalyzer:
         activity_metrics = analysis.get('activityAnalysis', {})
         
         critical_ids = [tid for tid, obj in activity_metrics.items() if obj.get('is_critical_p6')]
-        
-        source = self.data_store.get_latest()
-        names = {}
-        if source and 'df' in source and 'tasks' in source['df']:
-            tasks_df = source['df']['tasks']
-            names = tasks_df[tasks_df['task_id'].isin(critical_ids)][['task_id', 'task_name']].set_index('task_id')['task_name'].to_dict()
-
-        critical_list = [{"id": tid, "name": names.get(tid, tid), "delay": activity_metrics[tid].get('delay_days')} for tid in critical_ids]
+        critical_list = []
+        for tid in critical_ids[:15]:  # Top 15 to avoid token bloat
+            act = activity_metrics[tid]
+            critical_list.append({
+                "id": tid,
+                "code": act.get('task_code', tid),
+                "name": act.get('task_name', 'Unknown'),
+                "delay_days": act.get('delay_days', 0),
+                "risk_level": "Critical"
+            })
 
         total = len(activity_metrics)
-        pct = (len(critical_list) / total) * 100 if total > 0 else 0
+        pct = (len(critical_ids) / total) * 100 if total > 0 else 0
 
         res = {
-            "summary": f"Detected {len(critical_list)} activities on the critical path.",
+            "summary": f"Detected {len(critical_ids)} activities on the critical path.",
             "metrics": {
-                "criticalCount": len(critical_list),
+                "criticalCount": len(critical_ids),
                 "criticalPct": f"{pct:.1f}%"
             },
-            "issues": ["Large critical path detected."] if len(critical_list) > 50 else [],
+            "data": critical_list,
+            "issues": ["Large critical path detected."] if len(critical_ids) > 50 else [],
             "recommendations": ["Monitor prioritized activities for potential bottlenecks."]
         }
         self._cache['critical_path'] = res
@@ -281,13 +285,29 @@ class XERAnalyzer:
         analysis = self.data_store.get_deterministic_analysis()
         activity_metrics = analysis.get('activityAnalysis', {})
         
-        neg_float = [tid for tid, obj in activity_metrics.items() if (obj.get('float_hrs') or 0) < 0]
+        neg_float_ids = [tid for tid, obj in activity_metrics.items() if (obj.get('float_hrs') or 0) < 0]
+        # Sort by most negative float
+        sorted_ids = sorted(neg_float_ids, key=lambda tid: activity_metrics[tid].get('float_hrs', 0))
         
+        risky_list = []
+        for tid in sorted_ids[:15]:
+            act = activity_metrics[tid]
+            flt = act.get('float_hrs', 0)
+            level = "Extreme Risk" if flt < -200 else "High Risk" if flt < -100 else "Medium Risk"
+            risky_list.append({
+                "id": tid,
+                "code": act.get('task_code', tid),
+                "name": act.get('task_name', 'Unknown'),
+                "float_hrs": flt,
+                "risk_level": level
+            })
+            
         res = {
-            "summary": f"Found {len(neg_float)} activities with negative float.",
-            "metrics": {"negativeFloatCount": len(neg_float)},
-            "issues": ["Negative float indicates the project cannot meet its current constraints."] if neg_float else [],
-            "recommendations": ["Verify 'Must Finish By' dates and out-of-sequence progress."] if neg_float else []
+            "summary": f"Found {len(neg_float_ids)} activities with negative float.",
+            "metrics": {"negativeFloatCount": len(neg_float_ids)},
+            "data": risky_list,
+            "issues": ["Negative float indicates the project cannot meet its current constraints."] if neg_float_ids else [],
+            "recommendations": ["Verify 'Must Finish By' dates and out-of-sequence progress."] if neg_float_ids else []
         }
         self._cache['negative_float'] = res
         return res
@@ -336,6 +356,7 @@ class XERAnalyzer:
         res = {
             "summary": "Top delay drivers identified on the critical path.",
             "metrics": {"impactedDriversCount": len(drivers)},
+            "data": drivers,
             "issues": [f"Activity {d['task_code']} is driving {d['delay_days']} days of slippage." for d in drivers],
             "recommendations": ["Focus schedule recovery efforts on top driving activities."]
         }

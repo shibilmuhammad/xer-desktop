@@ -273,7 +273,7 @@ class XERDataStore:
                 "topDrivers": top_delay_drivers[['task_code', 'task_name', 'delay_days']].to_dict('records'),
                 "topRisks": top_neg_float[['task_code', 'task_name', 'float_hrs']].to_dict('records')
             },
-            "activityAnalysis": df[['task_id', 'status_enum', 'delay_days', 'float_hrs', 'delay_float_category', 'is_critical_p6', 'is_predicted_date', '_dt_current_end_date']].set_index('task_id').to_dict('index')
+            "activityAnalysis": df[['task_id', 'task_code', 'task_name', 'status_enum', 'delay_days', 'float_hrs', 'delay_float_category', 'is_critical_p6', 'is_predicted_date', '_dt_current_end_date']].set_index('task_id').to_dict('index')
         }
 
     def calculate_project_delay(self) -> Dict:
