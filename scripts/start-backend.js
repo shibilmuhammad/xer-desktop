@@ -1,7 +1,7 @@
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const { spawn, exec } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const net = require('net');
 
 const isWindows = os.platform() === 'win32';
@@ -12,14 +12,29 @@ const pythonPath = isWindows
   ? path.join(__dirname, '..', 'venv_desktop', 'Scripts', 'python.exe')
   : path.join(__dirname, '..', 'venv_desktop', 'bin', 'python3');
 
-// Kill whatever is using port 8000 before starting
 function killPort(port) {
-  return new Promise((resolve) => {
-    const cmd = isWindows
-      ? `for /f "tokens=5" %a in ('netstat -aon ^| find ":${port}"') do taskkill /f /pid %a`
-      : `lsof -ti :${port} | xargs kill -9`;
-    exec(cmd, () => resolve()); // ignore errors (means port was free)
-  });
+  try {
+    if (isWindows) {
+      // Windows: find PID using netstat and kill it
+      const result = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8' }).trim();
+      const lines = result.split('\n');
+      const pids = new Set();
+      lines.forEach(line => {
+        const parts = line.trim().split(/\s+/);
+        const pid = parts[parts.length - 1];
+        if (pid && !isNaN(pid)) pids.add(pid);
+      });
+      pids.forEach(pid => {
+        try { execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore' }); } catch(e) {}
+      });
+    } else {
+      // Mac/Linux
+      execSync(`lsof -ti tcp:${port} | xargs kill -9`, { stdio: 'ignore' });
+    }
+    console.log(`Killed stale process on port ${port}`);
+  } catch (e) {
+    // Port was free - that's fine
+  }
 }
 
 function isPortFree(port) {
@@ -42,10 +57,10 @@ async function start() {
 
   const free = await isPortFree(PORT);
   if (!free) {
-    console.log(`Port ${PORT} is in use. Killing stale process...`);
-    await killPort(PORT);
-    // Give OS a moment to release the port
-    await new Promise(r => setTimeout(r, 1000));
+    console.log(`Port ${PORT} is in use — killing stale process...`);
+    killPort(PORT);
+    // Give OS time to release the port
+    await new Promise(r => setTimeout(r, 1500));
   }
 
   const exe = fs.existsSync(pythonPath) ? pythonPath : (isWindows ? 'python' : 'python3');
@@ -53,7 +68,7 @@ async function start() {
 }
 
 function spawnBackend(exe) {
-  console.log(`Spawning uvicorn with: ${exe}`);
+  console.log(`Spawning uvicorn with: ${exe} on port ${PORT}`);
   const backend = spawn(exe, ['-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', String(PORT), '--reload'], {
     cwd: backendDir,
     stdio: 'pipe',
