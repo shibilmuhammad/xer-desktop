@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { Upload, X, Send, BarChart2, Activity, Calendar, Clock, User, Table as TableIcon, Search, ChevronLeft, ChevronRight, Filter, Eye, ListTree, Link as LinkIcon, Info, CheckCircle, Circle, Loader2, AlertTriangle, TrendingDown, Zap, Trash2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import logo from './assets/logo.png'
 
 function App() {
@@ -483,10 +484,10 @@ function App() {
         </div>
 
         {viewMode === 'audit' ? (
-          <div className="flex-1 overflow-y-auto bg-gray-50/50 relative pb-32">
+          <div className="flex-1 overflow-y-auto bg-gray-50/50 relative pb-48">
             {/* The Persistent Project Audit Dashboard */}
-            <div className="bg-gray-900 border-b border-gray-800 shadow-2xl relative overflow-hidden flex-shrink-0">
-              <div className="absolute top-0 right-0 p-8 opacity-[0.03]">
+            <div className="mx-6 my-6 bg-gray-900 rounded-[2.5rem] shadow-2xl relative overflow-hidden flex-shrink-0 border border-white/10">
+              <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
                 <BarChart2 size={240} />
               </div>
               
@@ -603,16 +604,20 @@ function App() {
             </div>
 
             {/* --- AI CHAT SECTION --- */}
-            <div className="max-w-4xl mx-auto w-full p-8">
-              <div className="flex items-center gap-3 mb-8 border-b border-gray-200 pb-4">
-                 <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center border border-blue-200">
-                    <Send size={14} className="text-blue-600" />
+            <div className="max-w-6xl mx-auto px-6 py-6 pb-24">
+               <div className="bg-white rounded-[2.5rem] border border-gray-200 shadow-sm p-10 relative flex flex-col min-h-[500px]">
+                 <div className="flex items-center gap-3 mb-10 border-b border-gray-100 pb-5">
+                    <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-200">
+                       <Send size={18} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-gray-900 tracking-tight">AI Audit Assistant</h3>
+                      <p className="text-xs text-gray-400 font-medium tracking-tight">Contextual P6 forensic analysis</p>
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-widest bg-gray-100 text-gray-500 px-3 py-1.5 rounded-xl ml-auto border border-gray-200/50">
+                      Session: {stats?.data_source}
+                    </span>
                  </div>
-                 <h3 className="text-lg font-extrabold text-gray-800 tracking-tight">AI Audit Assistant</h3>
-                 <span className="text-[9px] font-black uppercase tracking-widest bg-gray-200/50 text-gray-500 px-2 py-0.5 rounded ml-auto">
-                   Context: {stats?.data_source}
-                 </span>
-              </div>
               
               <div className="space-y-6">
                 {messages.length === 0 ? (
@@ -640,8 +645,8 @@ function App() {
                           {m.role === 'assistant' ? (
                             typeof m.content === 'object' && m.content !== null ? (
                               <div className="ai-structured-response flex flex-col gap-4 w-full">
-                                <div className="summary text-gray-800 font-medium whitespace-pre-wrap leading-relaxed">
-                                  <ReactMarkdown>{m.content.summary || ''}</ReactMarkdown>
+                                <div className="summary text-gray-800 font-medium leading-relaxed markdown-table-content">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content.summary || ''}</ReactMarkdown>
                                 </div>
                                 
                                 {m.content.metrics && Object.keys(m.content.metrics).length > 0 && (
@@ -689,8 +694,8 @@ function App() {
                                 )}
                               </div>
                             ) : (
-                              <div className="markdown-content text-gray-800 whitespace-pre-wrap leading-relaxed">
-                                <ReactMarkdown>{typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}</ReactMarkdown>
+                              <div className="markdown-content text-gray-800 leading-relaxed markdown-table-content">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}</ReactMarkdown>
                               </div>
                             )
                           ) : (
@@ -717,29 +722,30 @@ function App() {
                     </div>
                   </div>
                 )}
-                <div ref={chatEndRef} className="h-4" />
-              </div>
-            </div>
-
-            {/* Floating Chat Input Anchor */}
-            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-3xl px-8 pointer-events-none">
-              <div className="w-full relative group pointer-events-auto shadow-2xl rounded-2xl ring-1 ring-black/5">
-                <input 
-                  className="w-full pl-6 pr-14 py-4 bg-white/95 backdrop-blur-md border border-gray-200 shadow-lg rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-400 transition-all outline-none text-sm placeholder:text-gray-400 font-medium"
-                  placeholder="Ask about schedule delays, critical path, or risks..." 
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
-                />
-                <button 
-                  onClick={handleAsk}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-blue-50 hover:bg-blue-600 rounded-xl transition-all group-focus-within:bg-blue-600 group-focus-within:text-white text-blue-600"
-                >
-                  <Send size={18} className="transition-colors" />
-                </button>
-              </div>
-            </div>
-          </div>
+                 <div ref={chatEndRef} className="h-4" />
+               </div>
+               
+               {/* Floating Chat Input Anchor */}
+               <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-full max-w-2xl px-8 pointer-events-none">
+                 <div className="w-full relative group pointer-events-auto shadow-2xl rounded-2xl ring-1 ring-black/5">
+                   <input 
+                     className="w-full pl-6 pr-14 py-4.5 bg-white/95 backdrop-blur-md border border-gray-200 shadow-xl rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-400 transition-all outline-none text-sm placeholder:text-gray-400 font-medium"
+                     placeholder="Ask about schedule delays, critical path, or risks..." 
+                     value={query}
+                     onChange={(e) => setQuery(e.target.value)}
+                     onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
+                   />
+                   <button 
+                     onClick={handleAsk}
+                     className="absolute right-2.5 top-1/2 -translate-y-1/2 p-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-lg shadow-blue-200 text-white"
+                   >
+                     <Send size={18} />
+                   </button>
+                 </div>
+               </div>
+             </div>
+           </div>
+         </div>
         ) : viewMode === 'controller' ? (
           <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50">
             {/* P6 Style Toolbar */}
