@@ -1,13 +1,17 @@
 import json
+import os
 import pandas as pd
 from openai import OpenAI
 from typing import Dict, Any, Optional
 from .data_store import XERDataStore
 
 class XERAnalyzer:
-    def __init__(self, ollama_url: str = "http://127.0.0.1:11434/v1"):
+    def __init__(self):
         self.data_store = XERDataStore()
-        self.client = OpenAI(base_url=ollama_url, api_key="ollama")
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        self.client = OpenAI(api_key=api_key)
+        self.model = "gpt-4o-mini"
+
 
     def get_basic_stats(self) -> Dict[str, Any]:
         """Wrapper for backward compatibility with main.py"""
@@ -190,25 +194,26 @@ class XERAnalyzer:
     def _get_ai_explanation(self, query: str, data: Dict[str, Any]) -> str:
         try:
             prompt = f"""
-            User Query: {query}
-            Structured Analysis: {json.dumps(data, indent=2)}
-            
-            Instructions:
-            1. You are a professional Schedule Analyst (P6 Expert).
-            2. Explain the results concisely using the provided JSON only.
-            3. DO NOT perform any math. Simply interpret the 'metrics', 'issues', and 'recommendations'.
-            4. Use clear Markdown headings and bullet points.
-            5. ONLY answer what is relevant to the user's specific query. Do not summarize general project health unless it was specifically asked or is the only data provided.
-            """
-            
+User Query: {query}
+Structured Analysis: {json.dumps(data, indent=2)}
+
+Instructions:
+1. You are a professional Schedule Analyst (Primavera P6 Expert).
+2. Explain the results concisely using the provided JSON only.
+3. DO NOT perform any math. Simply interpret the 'metrics', 'issues', and 'recommendations'.
+4. Use clear Markdown headings and bullet points.
+5. ONLY answer what is relevant to the user's specific query.
+6. Be specific, professional and actionable. Avoid vague statements.
+"""
             response = self.client.chat.completions.create(
-                model="llama3",
+                model=self.model,
                 messages=[
-                    {"role": "system", "content": "Explain schedule analysis results as an expert analyst. No code. No math."},
+                    {"role": "system", "content": "You are an expert Primavera P6 schedule analyst. Explain schedule analysis results clearly and professionally. No code. No math. Use markdown formatting."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.2
             )
             return response.choices[0].message.content
         except Exception as e:
-            return f"Analysis complete. Result Summary: {json.dumps(data, indent=2)}"
+            return f"**Analysis Complete**\n\nResult: {json.dumps(data, indent=2)}\n\n_Error getting AI explanation: {str(e)}_"
+
