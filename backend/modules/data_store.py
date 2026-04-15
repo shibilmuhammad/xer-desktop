@@ -122,6 +122,8 @@ class XERDataStore:
         delay_matrix = summary.get('delayFloatMatrix', {})
         health_metrics = summary.get('healthMetrics', {})
         stats['delay_matrix'] = {**delay_matrix, **health_metrics}
+        stats['topDrivers'] = summary.get('topDrivers', [])
+        stats['topRisks'] = summary.get('topRisks', [])
 
         self._cached_stats = stats
         return stats

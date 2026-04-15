@@ -17,7 +17,7 @@ function App() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
-  const [viewMode, setViewMode] = useState('chat') // 'chat' or 'viewer'
+  const [viewMode, setViewMode] = useState('audit') // 'audit' or 'controller'
   const [viewerTable, setViewerTable] = useState('TASK')
   const [tableData, setTableData] = useState({ records: [], total: 0 })
   const [tablePage, setTablePage] = useState(1)
@@ -198,7 +198,7 @@ function App() {
   }, [baselineLoaded])
 
   useEffect(() => {
-    if (viewMode === 'viewer' && baselineLoaded) {
+    if (viewMode === 'controller' && baselineLoaded) {
       fetchTableData()
     }
   }, [viewMode, viewerTable, tablePage, tableSearch, selectedVersionId])
@@ -407,16 +407,16 @@ function App() {
 
         <div className="space-y-2 mt-auto">
           <button 
-            onClick={() => setViewMode('chat')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'chat' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
+            onClick={() => setViewMode('audit')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'audit' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
           >
-            <Send size={18} /> Chat Analysis
+            <Activity size={18} /> Project Audit
           </button>
           <button 
-            onClick={() => setViewMode('viewer')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'viewer' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
+            onClick={() => setViewMode('controller')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'controller' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
           >
-            <TableIcon size={18} /> Data Viewer
+            <TableIcon size={18} /> Project Controller
           </button>
         </div>
 
@@ -482,114 +482,160 @@ function App() {
           <span className="font-bold text-gray-900">{stats?.project_start} to {stats?.project_finish}</span>
         </div>
 
-        {viewMode === 'chat' ? (
-          <>
-            <div className="flex-1 overflow-y-auto p-8">
-              {messages.length === 0 ? (
-                <div className="max-w-3xl mx-auto py-12">
-                  <h1 className="text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">Welcome to XER Schedule Assistant</h1>
-                  <p className="text-lg text-gray-600 mb-8 leading-relaxed">I'm your Primavera P6 schedule analyst. I can help you with:</p>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-                    <div className="p-5 rounded-2xl border border-gray-100 bg-white shadow-sm hover:shadow-md transition-shadow">
-                      <h4 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
-                        <Activity size={18} className="text-blue-500" />
-                        Quality Analysis
-                      </h4>
-                      <ul className="text-sm text-gray-600 space-y-2">
-                        <li>• Long duration activities</li>
-                        <li>• Open-ended & dangling tasks</li>
-                        <li>• Critical path identification</li>
-                      </ul>
-                    </div>
-                    <div className="p-5 rounded-2xl border border-gray-100 bg-white shadow-sm hover:shadow-md transition-shadow">
-                      <h4 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
-                        <BarChart2 size={18} className="text-green-500" />
-                        Comparisons
-                      </h4>
-                      <ul className="text-sm text-gray-600 space-y-2">
-                        <li>• Baseline vs update analysis</li>
-                        <li>• Monthly progress tracking</li>
-                        <li>• Delay & variance reporting</li>
-                      </ul>
+        {viewMode === 'audit' ? (
+          <div className="flex-1 overflow-y-auto bg-gray-50/50 relative pb-32">
+            {/* The Persistent Project Audit Dashboard */}
+            <div className="bg-gray-900 border-b border-gray-800 shadow-2xl relative overflow-hidden flex-shrink-0">
+              <div className="absolute top-0 right-0 p-8 opacity-[0.03]">
+                <BarChart2 size={240} />
+              </div>
+              
+              <div className="max-w-6xl mx-auto p-8 relative z-10 w-full">
+                <div className="flex items-center justify-between mb-8">
+                  <h4 className="text-2xl font-bold flex items-center gap-3 text-white">
+                    <Activity size={24} className="text-blue-500" />
+                    Project Audit Summary
+                  </h4>
+                  <div className="flex flex-col items-end">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">P6 Precision Score</span>
+                    <div className="flex items-center gap-3">
+                      <span className={`text-4xl font-black ${
+                        stats?.delay_matrix?.healthStatus === 'Good' ? 'text-green-400' :
+                        stats?.delay_matrix?.healthStatus === 'Warning' ? 'text-orange-400' :
+                        'text-red-400'
+                      }`}>
+                        {stats?.delay_matrix?.projectHealthScore || 0}
+                      </span>
+                      <span className="text-sm font-bold text-gray-500">/ 100</span>
                     </div>
                   </div>
-                  
-                  <div className="bg-gray-900 text-white rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-8 opacity-10">
-                      <BarChart2 size={120} />
-                    </div>
-                    <div className="flex items-center justify-between mb-8 relative z-10">
-                      <h4 className="text-xl font-bold flex items-center gap-2">
-                        Schedule Health Analysis:
-                      </h4>
-                      <div className="flex flex-col items-end">
-                        <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">P6 Precision Score</span>
-                        <div className="flex items-center gap-3">
-                          <span className={`text-3xl font-black ${
-                            stats?.delay_matrix?.healthStatus === 'Good' ? 'text-green-400' :
-                            stats?.delay_matrix?.healthStatus === 'Warning' ? 'text-orange-400' :
-                            'text-red-400'
-                          }`}>
-                            {stats?.delay_matrix?.projectHealthScore || 0}
-                          </span>
-                          <span className="text-sm font-bold text-gray-500">/ 100</span>
-                        </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Left Column: Health and Score Metrics */}
+                  <div className="col-span-1 border-r border-white/10 pr-8">
+                    <h5 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-4">Core Metrics</h5>
+                    <div className="flex flex-col gap-5">
+                      <div className="flex justify-between items-center">
+                         <span className="text-gray-400 text-xs font-bold uppercase tracking-wider">Project Delay:</span>
+                         <span className={`text-xl font-black ${stats?.delay_matrix?.projectDelayDays > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                           {stats?.delay_matrix?.projectDelayDays || 0} Days
+                         </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                         <span className="text-gray-400 text-xs font-bold uppercase tracking-wider">Critical Tasks:</span>
+                         <span className="text-xl font-black text-white">{stats?.critical_count || 0}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                         <span className="text-gray-400 text-xs font-bold uppercase tracking-wider">Constraint:</span>
+                         <span className={`text-lg font-black ${stats?.delay_matrix?.isConstrained ? 'text-red-400' : 'text-green-400'}`}>
+                           {stats?.delay_matrix?.isConstrained ? 'Fixed-Finish' : 'Dynamic'}
+                         </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                         <span className="text-gray-400 text-xs font-bold uppercase tracking-wider">Negative Float:</span>
+                         <span className="text-xl font-black text-orange-400">{stats?.negative_float_count || 0}</span>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-6 gap-x-12 relative z-10 mb-8">
-                       <div className="flex flex-col">
-                         <span className="text-gray-400 text-[10px] uppercase font-bold tracking-wider mb-1">Critical Path Depth</span>
-                         <span className="text-2xl font-black">{stats?.critical_count || 0} <span className="text-xs font-normal text-gray-500">Activities</span></span>
-                       </div>
-                       <div className="flex flex-col">
-                         <span className="text-gray-400 text-[10px] uppercase font-bold tracking-wider mb-1">Constraint Status</span>
-                         <span className={`text-2xl font-black ${stats?.delay_matrix?.isConstrained ? 'text-red-400' : 'text-green-400'}`}>
-                           {stats?.delay_matrix?.isConstrained ? 'Fixed-Finish' : 'Dynamic'}
-                         </span>
-                       </div>
-                       <div className="flex flex-col">
-                         <span className="text-gray-400 text-[10px] uppercase font-bold tracking-wider mb-1">Negative Float</span>
-                         <span className="text-2xl font-black text-red-400">{stats?.negative_float_count || 0}</span>
-                       </div>
-                       <div className="flex flex-col">
-                         <span className="text-gray-400 text-[10px] uppercase font-bold tracking-wider mb-1">Open-Ended Logic</span>
-                         <span className="text-2xl font-black text-orange-400">{stats?.open_ended_count || 0}</span>
-                       </div>
-                    </div>
-
                     {stats?.delay_matrix?.qualityIssues?.length > 0 && (
-                      <div className="relative z-10 pt-6 border-t border-white/10">
-                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Detected Quality Issues:</span>
+                      <div className="mt-6 pt-5 border-t border-white/5">
+                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 block">Detected Integrity Issues:</span>
                         <div className="space-y-2">
                           {stats.delay_matrix.qualityIssues.map((issue, idx) => (
-                            <div key={idx} className="flex items-center gap-2 text-xs font-medium text-gray-300">
-                              <div className="w-1 h-1 rounded-full bg-red-400"></div>
-                              {issue}
+                            <div key={idx} className="flex items-center gap-2 text-[11px] font-medium text-gray-300">
+                              <div className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></div>
+                              <span className="leading-tight">{issue}</span>
                             </div>
                           ))}
                         </div>
                       </div>
                     )}
                   </div>
+
+                  {/* Middle Column: Top Delay Drivers */}
+                  <div className="col-span-1 border-r border-white/10 pr-8">
+                    <h5 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                       <TrendingDown size={14} className="text-red-400" />
+                       Top Delay Drivers
+                    </h5>
+                    <div className="space-y-2">
+                       {stats?.topDrivers?.length > 0 ? (
+                         stats.topDrivers.map((d, i) => (
+                           <div key={i} className="flex items-center justify-between p-2.5 bg-red-950/30 rounded border border-red-500/10">
+                             <div className="flex flex-col">
+                               <span className="text-xs font-black text-blue-300 leading-tight">{d.task_code}</span>
+                               <span className="text-[10px] font-medium text-gray-400 w-36 truncate">{d.task_name}</span>
+                             </div>
+                             <span className="text-sm font-black text-red-500">+{d.delay_days}d</span>
+                           </div>
+                         ))
+                       ) : (
+                         <div className="text-sm text-gray-500 italic mt-2">No active delay drivers detected.</div>
+                       )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Highest Risk (Negative Float) */}
+                  <div className="col-span-1">
+                    <h5 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                       <Zap size={14} className="text-orange-400" />
+                       Highest Risk (Negative Float)
+                    </h5>
+                    <div className="space-y-2">
+                       {stats?.topRisks?.length > 0 ? (
+                         stats.topRisks.map((r, i) => (
+                           <div key={i} className="flex items-center justify-between p-2.5 bg-orange-950/20 rounded border border-orange-500/10">
+                             <div className="flex flex-col">
+                               <span className="text-xs font-black text-blue-300 leading-tight">{r.task_code}</span>
+                               <span className="text-[10px] font-medium text-gray-400 w-36 truncate">{r.task_name}</span>
+                             </div>
+                             <span className="text-sm font-black text-orange-400">{r.float_hrs}h</span>
+                           </div>
+                         ))
+                       ) : (
+                         <div className="text-sm text-gray-500 italic mt-2">No negative float detected.</div>
+                       )}
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <div className="max-w-3xl mx-auto space-y-6 pb-4">
-                  {Array.isArray(messages) && messages.map((m, i) => {
+              </div>
+            </div>
+
+            {/* --- AI CHAT SECTION --- */}
+            <div className="max-w-4xl mx-auto w-full p-8">
+              <div className="flex items-center gap-3 mb-8 border-b border-gray-200 pb-4">
+                 <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center border border-blue-200">
+                    <Send size={14} className="text-blue-600" />
+                 </div>
+                 <h3 className="text-lg font-extrabold text-gray-800 tracking-tight">AI Audit Assistant</h3>
+                 <span className="text-[9px] font-black uppercase tracking-widest bg-gray-200/50 text-gray-500 px-2 py-0.5 rounded ml-auto">
+                   Context: {stats?.data_source}
+                 </span>
+              </div>
+              
+              <div className="space-y-6">
+                {messages.length === 0 ? (
+                   <div className="text-center py-12 bg-white rounded-3xl border border-gray-100 shadow-sm">
+                     <p className="text-gray-500 font-medium max-w-md mx-auto text-sm leading-relaxed">
+                       Ask me anything about your project's delays, risks, or schedule logic. I'll construct analytical reports directly from your latest project data.
+                     </p>
+                   </div>
+                ) : (
+                   Array.isArray(messages) && messages.map((m, i) => {
                     if (!m) return null;
                     return (
                       <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         {m.role === 'assistant' && (
-                          <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mt-1">
-                            <Activity size={16} className="text-blue-600" />
+                          <div className="w-8 h-8 rounded-full bg-blue-100 flex flex-shrink-0 items-center justify-center mt-1 outline outline-2 outline-white shadow-sm">
+                            <Activity size={14} className="text-blue-600" />
                           </div>
                         )}
                         <div className={`
-                          max-w-[85%] px-5 py-3.5 rounded-2xl text-sm leading-relaxed shadow-sm
+                          max-w-[85%] px-5 py-4 rounded-2xl text-sm leading-relaxed shadow-sm transition-all
                           ${m.role === 'user' 
-                            ? 'bg-blue-600 text-white rounded-tr-none' 
-                            : 'bg-white border border-gray-100 text-gray-800 rounded-tl-none'}
+                            ? 'bg-blue-600 text-white rounded-tr-none shadow-md' 
+                            : 'bg-white border border-gray-100 text-gray-800 rounded-tl-none ring-1 ring-black/5'}
                         `}>
                           {m.role === 'assistant' ? (
                             typeof m.content === 'object' && m.content !== null ? (
@@ -601,8 +647,8 @@ function App() {
                                 {m.content.metrics && Object.keys(m.content.metrics).length > 0 && (
                                   <div className="grid grid-cols-2 gap-3 mt-1">
                                     {Object.entries(m.content.metrics).map(([k, v]) => (
-                                      <div key={k} className="bg-blue-50 border border-blue-100/50 p-3 rounded-lg shadow-sm">
-                                        <div className="text-[10px] text-blue-500 font-bold uppercase tracking-widest mb-1">
+                                      <div key={k} className="bg-blue-50 border border-blue-100/50 p-3 rounded-xl shadow-sm">
+                                        <div className="text-[10px] text-blue-500 font-black uppercase tracking-widest mb-1">
                                           {k.replace(/([A-Z])/g, ' $1').trim()}
                                         </div>
                                         <div className="text-xl font-black text-blue-900">{v}</div>
@@ -613,8 +659,8 @@ function App() {
 
                                 {m.content.insights && m.content.insights.length > 0 && (
                                   <div className="insights mt-2 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                    <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
-                                      <Activity size={14} /> Key Analytical Insights
+                                    <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                                      <Activity size={12} /> Key Analytical Insights
                                     </h5>
                                     <ul className="space-y-2.5">
                                       {m.content.insights.map((insight, idx) => (
@@ -629,12 +675,12 @@ function App() {
 
                                 {m.content.drivers && m.content.drivers.length > 0 && (
                                   <div className="drivers mt-1">
-                                    <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                      <TrendingDown size={14} className="text-red-400"/> Critical Impact Drivers
+                                    <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                      <TrendingDown size={12} className="text-red-400"/> Critical Impact Drivers
                                     </h5>
                                     <div className="flex flex-wrap gap-2">
                                       {m.content.drivers.map((driver, idx) => (
-                                        <span key={idx} className="px-2.5 py-1.5 bg-red-50 text-red-700 border border-red-100 rounded-md text-xs font-mono font-medium shadow-sm">
+                                        <span key={idx} className="px-2.5 py-1 bg-red-50 text-red-700 border border-red-100 rounded text-xs font-mono font-bold shadow-sm">
                                           {driver.length > 60 ? driver.substring(0, 60) + "..." : driver}
                                         </span>
                                       ))}
@@ -653,47 +699,48 @@ function App() {
                         </div>
                       </div>
                     );
-                  })}
-                  
-                  {isTyping && (
-                    <div className="flex gap-3 justify-start">
-                      <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 mt-1">
-                        <Activity size={16} className="text-blue-400" />
-                      </div>
-                      <div className="bg-white border border-gray-100 text-gray-500 px-5 py-3.5 rounded-2xl rounded-tl-none text-sm flex items-center gap-3 shadow-sm italic">
-                        <div className="flex gap-1">
-                          <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.8s]"></div>
-                          <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.8s] [animation-delay:0.2s]"></div>
-                          <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.8s] [animation-delay:0.4s]"></div>
-                        </div>
-                        Analyzing schedule...
-                      </div>
+                   })
+                )}
+                
+                {isTyping && (
+                  <div className="flex gap-3 justify-start">
+                    <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0 mt-1">
+                      <Loader2 size={16} className="text-blue-400 animate-spin" />
                     </div>
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
-              )}
+                    <div className="bg-white border border-gray-100 text-gray-500 px-5 py-3.5 rounded-2xl rounded-tl-none text-sm flex items-center gap-3 shadow-sm italic">
+                      <div className="flex gap-1">
+                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.8s]"></div>
+                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.8s] [animation-delay:0.2s]"></div>
+                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-duration:0.8s] [animation-delay:0.4s]"></div>
+                      </div>
+                      AI is inspecting schedule logic...
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} className="h-4" />
+              </div>
             </div>
 
-            <div className="p-6 bg-white border-t border-gray-100">
-              <div className="max-w-3xl mx-auto relative group">
+            {/* Floating Chat Input Anchor */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 w-full max-w-3xl px-8 pointer-events-none">
+              <div className="w-full relative group pointer-events-auto shadow-2xl rounded-2xl ring-1 ring-black/5">
                 <input 
-                  className="w-full pl-6 pr-14 py-4 bg-gray-100 border-none rounded-2xl focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all outline-none text-sm placeholder:text-gray-400 shadow-inner"
-                  placeholder="Ask about your schedule..." 
+                  className="w-full pl-6 pr-14 py-4 bg-white/95 backdrop-blur-md border border-gray-200 shadow-lg rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-400 transition-all outline-none text-sm placeholder:text-gray-400 font-medium"
+                  placeholder="Ask about schedule delays, critical path, or risks..." 
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
                 />
                 <button 
                   onClick={handleAsk}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-2 hover:bg-blue-50 rounded-xl transition-colors group-focus-within:bg-blue-600"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-blue-50 hover:bg-blue-600 rounded-xl transition-all group-focus-within:bg-blue-600 group-focus-within:text-white text-blue-600"
                 >
-                  <Send size={20} className="text-blue-500 group-focus-within:text-white transition-colors" />
+                  <Send size={18} className="transition-colors" />
                 </button>
               </div>
             </div>
-          </>
-        ) : (
+          </div>
+        ) : viewMode === 'controller' ? (
           <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50">
             {/* P6 Style Toolbar */}
             <div className="px-8 py-5 border-b border-gray-200 bg-white flex flex-col gap-4">
@@ -770,50 +817,9 @@ function App() {
             </div>
 
             {/* P6 Legend & Health Dashboard */}
-            {viewMode === 'viewer' && viewerTable === 'TASK' && tableData.projectAnalysis && (
+            {viewMode === 'controller' && viewerTable === 'TASK' && tableData.projectAnalysis && (
               <div className="px-8 mt-4 flex flex-col gap-4">
-                {/* Analytical Insights Card */}
-                {viewerTable === 'TASK' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-2 animate-in fade-in slide-in-from-top-4 duration-500">
-                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-2 mb-3">
-                        <TrendingDown size={16} className="text-red-600" />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-700">Top Delay Drivers</span>
-                        <div className="h-px flex-1 bg-gray-50"></div>
-                      </div>
-                      <div className="space-y-1.5">
-                        {tableData.projectAnalysis.topDrivers?.map((d, i) => (
-                          <div key={i} className="flex items-center justify-between p-2 bg-red-50/30 rounded-lg border border-red-100/20">
-                            <div className="flex flex-col max-w-[70%]">
-                              <span className="text-[10px] font-black text-blue-900 leading-tight">{d.task_code}</span>
-                              <span className="text-[9px] font-medium text-gray-500 truncate">{d.task_name}</span>
-                            </div>
-                            <span className="text-[11px] font-black text-red-600">+{d.delay_days}d</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
-                      <div className="flex items-center gap-2 mb-3">
-                        <Zap size={16} className="text-orange-600" />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-700">Highest Risk (Neg Float)</span>
-                        <div className="h-px flex-1 bg-gray-50"></div>
-                      </div>
-                      <div className="space-y-1.5">
-                        {tableData.projectAnalysis.topRisks?.map((r, i) => (
-                          <div key={i} className="flex items-center justify-between p-2 bg-orange-50/30 rounded-lg border border-orange-100/20">
-                            <div className="flex flex-col max-w-[70%]">
-                              <span className="text-[10px] font-black text-blue-900 leading-tight">{r.task_code}</span>
-                              <span className="text-[9px] font-medium text-gray-500 truncate">{r.task_name}</span>
-                            </div>
-                            <span className="text-[11px] font-black text-orange-600">{r.float_hrs}h</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
+
 
                 <div className="flex flex-wrap gap-4 items-center">
                   <div className="px-4 py-2 bg-white rounded-xl border border-gray-200 shadow-sm flex items-center gap-3">
@@ -1032,7 +1038,7 @@ function App() {
               </div>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   )
