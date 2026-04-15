@@ -592,11 +592,61 @@ function App() {
                             : 'bg-white border border-gray-100 text-gray-800 rounded-tl-none'}
                         `}>
                           {m.role === 'assistant' ? (
-                            <div className="markdown-content">
-                              <ReactMarkdown>
-                                {typeof m.content === 'string' ? m.content : ''}
-                              </ReactMarkdown>
-                            </div>
+                            typeof m.content === 'object' && m.content !== null ? (
+                              <div className="ai-structured-response flex flex-col gap-4 w-full">
+                                <div className="summary text-gray-800 font-medium whitespace-pre-wrap leading-relaxed">
+                                  <ReactMarkdown>{m.content.summary || ''}</ReactMarkdown>
+                                </div>
+                                
+                                {m.content.metrics && Object.keys(m.content.metrics).length > 0 && (
+                                  <div className="grid grid-cols-2 gap-3 mt-1">
+                                    {Object.entries(m.content.metrics).map(([k, v]) => (
+                                      <div key={k} className="bg-blue-50 border border-blue-100/50 p-3 rounded-lg shadow-sm">
+                                        <div className="text-[10px] text-blue-500 font-bold uppercase tracking-widest mb-1">
+                                          {k.replace(/([A-Z])/g, ' $1').trim()}
+                                        </div>
+                                        <div className="text-xl font-black text-blue-900">{v}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {m.content.insights && m.content.insights.length > 0 && (
+                                  <div className="insights mt-2 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                    <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+                                      <Activity size={14} /> Key Analytical Insights
+                                    </h5>
+                                    <ul className="space-y-2.5">
+                                      {m.content.insights.map((insight, idx) => (
+                                        <li key={idx} className="flex gap-2.5 text-sm text-gray-700">
+                                           <div className="mt-0.5"><CheckCircle size={14} className="text-green-500" /></div>
+                                           <span className="leading-snug">{insight}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {m.content.drivers && m.content.drivers.length > 0 && (
+                                  <div className="drivers mt-1">
+                                    <h5 className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                      <TrendingDown size={14} className="text-red-400"/> Critical Impact Drivers
+                                    </h5>
+                                    <div className="flex flex-wrap gap-2">
+                                      {m.content.drivers.map((driver, idx) => (
+                                        <span key={idx} className="px-2.5 py-1.5 bg-red-50 text-red-700 border border-red-100 rounded-md text-xs font-mono font-medium shadow-sm">
+                                          {driver.length > 60 ? driver.substring(0, 60) + "..." : driver}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="markdown-content text-gray-800 whitespace-pre-wrap leading-relaxed">
+                                <ReactMarkdown>{typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}</ReactMarkdown>
+                              </div>
+                            )
                           ) : (
                             String(m.content || '')
                           )}
