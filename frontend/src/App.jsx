@@ -119,8 +119,15 @@ function App() {
         const removeError = ipcRenderer.on('setup-error', (e, err) => setSetupError(err))
         const removeComplete = ipcRenderer.on('setup-complete', (e, data) => {
           if (data && data.apiPort) {
-             // Configure dynamic port for the application session
+             // Point axios directly at the backend — no /api prefix needed (Vite proxy handles that in browser)
              axios.defaults.baseURL = `http://127.0.0.1:${data.apiPort}`
+             // Override all calls to strip /api prefix for direct backend access
+             axios.interceptors.request.use((config) => {
+               if (config.url && config.url.startsWith('/api/')) {
+                 config.url = config.url.replace('/api/', '/')
+               }
+               return config
+             })
           }
           setIsSetupComplete(true)
         })
