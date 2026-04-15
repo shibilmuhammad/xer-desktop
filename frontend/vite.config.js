@@ -9,7 +9,8 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
-    strictPort: true, // Always use 5173, never auto-bump to 5174
+    strictPort: true,
+    host: '0.0.0.0', // Bind to all interfaces — fixes IPv6 vs IPv4 mismatch in Electron
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
