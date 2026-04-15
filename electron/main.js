@@ -197,10 +197,28 @@ async function runSetupSequence() {
   }
 }
 
-function createWindow() {
+function waitForVite(url, retries = 30) {
+  return new Promise((resolve, reject) => {
+    const check = (remaining) => {
+      http.get(url, (res) => {
+        resolve()
+      }).on('error', () => {
+        if (remaining <= 0) {
+          reject(new Error('Vite dev server did not start in time'))
+        } else {
+          setTimeout(() => check(remaining - 1), 500)
+        }
+      })
+    }
+    check(retries)
+  })
+}
+
+async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
+    show: false, // Don't show until ready
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -212,10 +230,23 @@ function createWindow() {
     const indexPath = path.join(__dirname, 'frontend', 'index.html')
     startUrl = `file://${indexPath}`
   }
+
+  // In dev mode, wait for Vite to be ready before loading
+  if (!app.isPackaged) {
+    try {
+      console.log('Waiting for Vite dev server...')
+      await waitForVite('http://127.0.0.1:5173')
+      console.log('Vite is ready!')
+    } catch (e) {
+      console.error('Could not connect to Vite:', e.message)
+    }
+  }
   
   mainWindow.loadURL(startUrl)
 
+  // Show window only after page has loaded (no white flash)
   mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.show()
     runSetupSequence()
   })
 
@@ -227,7 +258,7 @@ function createWindow() {
   })
 }
 
-app.on('ready', () => {
+app.whenReady().then(() => {
   createWindow()
 })
 
