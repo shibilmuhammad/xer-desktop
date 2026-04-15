@@ -358,50 +358,93 @@ function App() {
           <img src={logo} alt="EllisDon Logo" className="h-8 object-contain" />
         </div>
         
-        <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
-          <BarChart2 size={20} className="text-blue-600" />
-          Project Files
+        <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+          <BarChart2 size={16} className="text-blue-500" />
+          Project Repository
         </h3>
         
-        <p className="text-sm font-semibold text-gray-700 mb-2">Schedule Versions:</p>
-        <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-          {versions.map((v, i) => (
-            <div 
-              key={v.id} 
-              onClick={() => { setSelectedVersionId(v.id); setViewMode('viewer'); }}
-              className={`p-3 rounded-xl border cursor-pointer transition-all relative group ${selectedVersionId === v.id ? 'bg-blue-50 border-blue-200 outline-2 outline-blue-500/20' : 'bg-white border-gray-100 hover:border-blue-100 hover:bg-gray-50'}`}
-            >
-              <button 
-                onClick={(e) => handleDeleteVersion(e, v.id)}
-                className="absolute top-2 right-2 p-1.5 rounded-md hover:bg-red-50 text-gray-300 hover:text-red-600 transition-all opacity-0 group-hover:opacity-100 z-10"
-                title="Delete version"
-              >
-                <Trash2 size={12} />
-              </button>
-              <div className="flex items-center justify-between mb-1">
-                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${v.type === 'baseline' ? 'bg-blue-600 text-white' : 'bg-green-600 text-white'}`}>
-                  {v.type}
-                </span>
-                <span className="text-[9px] font-bold text-gray-400 font-mono pr-6">{v.data_date}</span>
-              </div>
-              <div className={`text-xs font-bold truncate ${selectedVersionId === v.id ? 'text-blue-900' : 'text-gray-700'}`}>
-                {v.name}
-              </div>
+        <div className="flex-1 overflow-y-auto pr-1 space-y-8">
+          {/* Baseline Section */}
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-black text-gray-900 uppercase tracking-wider">Baseline Schedule</span>
+              {!versions.find(v => v.type === 'baseline') && (
+                <span className="text-[9px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 italic">Required</span>
+              )}
             </div>
-          ))}
-        </div>
+            
+            {versions.filter(v => v.type === 'baseline').length > 0 ? (
+              versions.filter(v => v.type === 'baseline').map((v) => (
+                <div 
+                  key={v.id} 
+                  onClick={() => { setSelectedVersionId(v.id); setViewMode('viewer'); }}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 shadow-blue-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}
+                >
+                  <button 
+                    onClick={(e) => handleDeleteVersion(e, v.id)}
+                    className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
+                    title="Delete baseline"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white animate-pulse' : 'bg-blue-600'}`}></div>
+                    <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
+                  </div>
+                  <div className={`text-xs font-black truncate leading-tight pr-6 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
+                    {v.name}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <label className="flex flex-col items-center justify-center p-5 border-2 border-dashed border-blue-100 rounded-2xl cursor-pointer hover:bg-blue-50/50 transition-all bg-blue-50/20 group">
+                <Upload size={20} className="text-blue-400 mb-2 group-hover:scale-110 transition-transform" />
+                <p className="text-[10px] font-black text-blue-700 uppercase tracking-tighter">Upload Master Baseline</p>
+                <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'baseline')} disabled={loading} />
+              </label>
+            )}
+          </section>
 
-        <div className="mt-6">
-          <p className="text-sm font-semibold text-gray-700 mb-3">Add Update:</p>
-          <label className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-gray-200 rounded-xl cursor-pointer hover:bg-gray-50 transition-all border-green-100 bg-green-50/30">
-             <Upload size={24} className="text-green-600 mb-2" />
-             <p className="text-[11px] font-medium text-green-800">Drag & drop update file</p>
-             <p className="text-[10px] text-green-600/60 mb-3">Limit 200MB • XER</p>
-             <span className="bg-white border border-green-200 px-4 py-1.5 rounded-md text-[11px] font-semibold text-green-700 shadow-sm">
-               Browse
-             </span>
-             <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'update')} disabled={loading} />
-          </label>
+          {/* Monthly Updates Section */}
+          <section>
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[11px] font-black text-gray-950 uppercase tracking-wider font-sans">Monthly Updates</span>
+              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-md">{versions.filter(v => v.type === 'update').length}</span>
+            </div>
+            
+            <div className="space-y-3">
+              {versions.filter(v => v.type === 'update').map((v) => (
+                <div 
+                  key={v.id} 
+                  onClick={() => { setSelectedVersionId(v.id); setViewMode('viewer'); }}
+                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 shadow-blue-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}
+                >
+                  <button 
+                    onClick={(e) => handleDeleteVersion(e, v.id)}
+                    className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100 shadow-sm'}`}
+                    title="Delete update"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white' : 'bg-green-500'}`}></div>
+                    <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
+                  </div>
+                  <div className={`text-xs font-black truncate leading-tight pr-8 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
+                    {v.name}
+                  </div>
+                </div>
+              ))}
+
+              <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-100 rounded-2xl cursor-pointer hover:bg-gray-50 transition-all group">
+                <div className="flex items-center gap-2">
+                  <Upload size={16} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+                  <span className="text-[10px] font-black text-gray-500 uppercase group-hover:text-blue-700 transition-colors">Add Monthly Update</span>
+                </div>
+                <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'update')} disabled={loading} />
+              </label>
+            </div>
+          </section>
         </div>
 
         <hr className="my-6 border-gray-200" />
