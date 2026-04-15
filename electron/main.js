@@ -168,6 +168,23 @@ function pullModel() {
 }
 
 async function runSetupSequence() {
+  const isDev = !app.isPackaged
+
+  if (isDev) {
+    // In dev mode: backend is already started by start-backend.js on port 8000
+    // Just wait for it to be ready, then signal complete
+    try {
+      mainWindow.webContents.send('setup-status', 'Connecting to dev backend...')
+      await checkUrlReady('http://127.0.0.1:8000', 30)
+      apiPort = 8000
+      mainWindow.webContents.send('setup-complete', { apiPort })
+    } catch (err) {
+      mainWindow.webContents.send('setup-error', 'Backend not ready. Make sure npm run dev-backend is running. ' + err.message)
+    }
+    return
+  }
+
+  // Production mode: full setup sequence
   try {
     mainWindow.webContents.send('setup-status', 'Checking AI environment...')
     const hasOllama = await checkOllamaInstall()
@@ -196,6 +213,7 @@ async function runSetupSequence() {
     mainWindow.webContents.send('setup-error', err.message)
   }
 }
+
 
 function waitForVite(url, retries = 30) {
   return new Promise((resolve, reject) => {
