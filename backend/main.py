@@ -1,16 +1,17 @@
 import os
 import shutil
 import pandas as pd
-from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
 from typing import List, Optional
+
+# Load environment variables from the root directory
+load_dotenv(os.path.join(os.path.dirname(__file__), '../.env'))
+
+
 from modules.extractor import CompleteXERExtractor
 from modules.analyzer import XERAnalyzer
-
-# Load .env from project root (one level above /backend)
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
-
 
 app = FastAPI()
 

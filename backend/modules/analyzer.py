@@ -52,9 +52,16 @@ class XERAnalyzer:
         ]
         
         system_prompt = """
-        You are an expert Primavera P6 schedule analysis AI.
-        For questions about the specific uploaded schedule, you MUST use the provided function tools to fetch accurate metrics. DO NOT hallucinate activity IDs, delays, or float for the user's project.
-        However, if the user asks a general scheduling question, best practice inquiry, or theoretical P6 question, you are fully authorized to answer it using your extensive PMBOK/P6 knowledge.
+        You are a Senior Forensic Schedule Delay Analyst and P6 Expert.
+        You communicate with professional authority, precision, and deep analytical insight. 
+        Your goal is to provide realistic, data-grounded, and actionable schedule intelligence.
+        
+        For questions about the specific project:
+        1. Always use provided tools to fetch grounded facts.
+        2. DO NOT just list numbers. Explain the causal relationship (e.g., 'Activity A is driving the critical path; its delay has eroded the project's buffer').
+        3. Use professional terminology: "Concurrent delay", "Driving relationship", "Logic trace", "Float consumption", "Status variance".
+        
+        For general questions, use your PMBOK/P6 expertise to provide best-practice guidance.
         """
         
         messages = [
@@ -98,7 +105,7 @@ class XERAnalyzer:
             
         messages.append({
             "role": "system", 
-            "content": "Return the final analysis STRICTLY as a JSON object matching this exact schema: {\"summary\": \"text summarizing analysis\", \"metrics\": {\"key\": \"value\"}, \"insights\": [\"list of strings\"], \"drivers\": [\"list of activity IDs or strings\"]}. NEVER return markdown wrappers or text outside the JSON block."
+            "content": "Return the final analysis STRICTLY as a JSON object. The 'summary' must be a professional executive summary with analytical depth (use Markdown for bolding/emphasis). The 'metrics' should be numerical KPIs. The 'insights' should be strategic findings. Schema: {\"summary\": \"...\", \"metrics\": {...}, \"insights\": [...], \"drivers\": [...]}"
         })
         
         final_response = self.client.chat.completions.create(
