@@ -9,19 +9,47 @@ from .data_store import XERDataStore
 class XERAnalyzer:
     def __init__(self, ollama_url: str = "http://127.0.0.1:11434/v1"):
         self.data_store = XERDataStore()
+        self.ollama_url = ollama_url
         
-        # Determine provider
+        # Check for OpenAI Key to determine default provider
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        if api_key:
-            self.provider = "openai"
-            self.client = OpenAI(api_key=api_key)
-            self.model = "gpt-4o" 
-        else:
-            self.provider = "local"
-            self.client = OpenAI(base_url=ollama_url, api_key="ollama")
-            self.model = "llama3"
-            
+        self.provider = "openai" if api_key else "local"
+        self.model = "gpt-4o" if api_key else "llama3"
+        
+        self._initialize_client()
         self._cache = {}
+
+    def _initialize_client(self):
+        """Internal helper to setup the OpenAI client based on the current provider."""
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        
+        if self.provider == "openai" and api_key:
+            self.client = OpenAI(api_key=api_key)
+            # Use gpt-4o as default for high-precision tool calling
+            if self.model == "llama3": self.model = "gpt-4o" 
+        else:
+            # Fallback to local if no API key or explicitly set to local
+            self.provider = "local"
+            self.client = OpenAI(base_url=self.ollama_url, api_key="ollama")
+            if self.model == "gpt-4o": self.model = "llama3"
+
+    def get_config(self) -> Dict[str, str]:
+        """Returns the current AI configuration."""
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "ollama_url": self.ollama_url,
+            "has_openai_key": bool(os.getenv("OPENAI_API_KEY", "").strip())
+        }
+
+    def set_config(self, provider: str, model: Optional[str] = None):
+        """Updates the AI configuration and re-initializes the client."""
+        if provider in ["openai", "local"]:
+            self.provider = provider
+        if model:
+            self.model = model
+        self._initialize_client()
+        return self.get_config()
 
     def get_basic_stats(self, version_id: Optional[str] = None) -> Dict[str, Any]:
         """Wrapper for backward compatibility and version-specific stats"""
@@ -48,7 +76,8 @@ class XERAnalyzer:
             {"type": "function", "function": {"name": "get_critical_path", "description": "Identifies critical path activities (Float <= 0) and counts them."}},
             {"type": "function", "function": {"name": "get_negative_float_activities", "description": "Filters activities with negative float."}},
             {"type": "function", "function": {"name": "check_open_ended_activities", "description": "Detects activities missing predecessors or successors."}},
-            {"type": "function", "function": {"name": "get_delay_drivers", "description": "Identifies activities causing the most project-level slippage."}}
+            {"type": "function", "function": {"name": "get_delay_drivers", "description": "Identifies activities causing the most project-level slippage."}},
+            {"type": "function", "function": {"name": "get_discipline_summary", "description": "Provides a high-level summary of activity status, duration, and float aggregated by project discipline (WBS level)."}}
         ]
         
         system_prompt = """
@@ -61,6 +90,7 @@ class XERAnalyzer:
         2. DO NOT just list numbers. Explain the causal relationship (e.g., 'Activity A is driving the critical path; its delay has eroded the project's buffer').
         3. Use professional terminology: "Concurrent delay", "Driving relationship", "Logic trace", "Float consumption", "Status variance".
         4. **Detailed Listing**: When asked to list high-risk or delayed activities, use the 'data' field in tool results to provide a structured table or list including Activity ID, Name, and Level (e.g., Extreme Risk, Critical).
+        5. **Discipline Summaries**: When asked for a summary by discipline, department, or WBS, use the 'get_discipline_summary' tool. This provides a high-level Level-2 overview of the project. Present the results in a concise Markdown table.
         
         For general questions, use your PMBOK/P6 expertise to provide best-practice guidance.
         """
@@ -189,6 +219,9 @@ class XERAnalyzer:
             results['project_health'] = self.get_project_health()
             results['delay_analysis'] = self.calculate_project_delay()
             results['delay_drivers'] = self.get_delay_drivers()
+
+        if any(w in query for w in ['discipline', 'wbs', 'by level', 'department', 'area']):
+            results['discipline_summary'] = self.get_discipline_summary()
 
         if not results:
             results['project_health'] = self.get_project_health()
@@ -363,6 +396,20 @@ class XERAnalyzer:
         self._cache['delay_drivers'] = res
         return res
 
+    def get_discipline_summary(self) -> Dict[str, Any]:
+        if 'discipline_summary' in self._cache: return self._cache['discipline_summary']
+        # target_level=2 provides the most common executive view (Project > Discipline)
+        data = self.data_store.get_wbs_summary(target_level=2)
+        res = {
+            "summary": "Project status aggregated by major discipline (WBS Level 2).",
+            "metrics": {"totalDisciplinesShown": len(data)},
+            "data": data,
+            "issues": [f"{d['discipline']} has active tasks with {d['avg_float']} avg float." for d in data[:5] if d['avg_float'] < 0],
+            "recommendations": ["Review disciplines with significant negative float and trace logic dependencies."]
+        }
+        self._cache['discipline_summary'] = res
+        return res
+
     def _get_ai_explanation(self, query: str, data: Dict[str, Any]) -> str:
         try:
             prompt = f"""
@@ -371,14 +418,14 @@ class XERAnalyzer:
             
             Instructions:
             1. You are a professional Schedule Analyst (P6 Expert).
-            2. Explain the results concisely using the provided JSON only.
-            3. DO NOT perform any math. Simply interpret the 'metrics', 'issues', and 'recommendations'.
+            2. Explain the results concisely using the provided JSON. Use the 'data' field to construct detailed Markdown tables if requested or relevant.
+            3. DO NOT perform any math. Simply interpret the 'metrics', 'data', 'issues', and 'recommendations'.
             4. Use clear Markdown headings and bullet points.
             5. ONLY answer what is relevant to the user's specific query. Do not summarize general project health unless it was specifically asked or is the only data provided.
             """
             
             response = self.client.chat.completions.create(
-                model="llama3",
+                model=self.model,
                 messages=[
                     {"role": "system", "content": "Explain schedule analysis results as an expert analyst. No code. No math."},
                     {"role": "user", "content": prompt}

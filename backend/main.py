@@ -80,6 +80,14 @@ async def ask_question(query: str = Form(...)):
     response = analyzer.analyze(query)
     return {"response": response}
 
+@app.get("/settings")
+async def get_settings():
+    return analyzer.get_config()
+
+@app.post("/settings/update")
+async def update_settings(provider: str = Form(...), model: Optional[str] = Form(None)):
+    return analyzer.set_config(provider, model)
+
 @app.get("/versions")
 async def get_versions():
     """Returns list of all uploaded schedule versions"""

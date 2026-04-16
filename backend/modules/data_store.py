@@ -393,6 +393,95 @@ class XERDataStore:
             "high_float_50plus": high
         }
 
+    def get_wbs_summary(self, version_id: Optional[str] = None, target_level: int = 2) -> List[Dict]:
+        """Aggregates task data by WBS level to provide discipline-level summaries (TPM Optimized)"""
+        source = self.get_version(version_id)
+        if not source or 'df' not in source: return []
+        
+        tasks_df = source['df'].get('tasks')
+        wbs_df = source['df'].get('projwbs')
+        
+        if tasks_df is None or wbs_df is None or len(tasks_df) == 0: return []
+        
+        # 1. Map WBS hierarchy levels
+        parent_map = wbs_df.set_index('wbs_id')['parent_wbs_id'].to_dict()
+        wbs_info = wbs_df.set_index('wbs_id')[['wbs_short_name', 'wbs_name']].to_dict('index')
+        
+        def get_parent_at_level(wbs_id, level):
+            path = []
+            curr = wbs_id
+            while curr in parent_map and pd.notnull(curr):
+                path.append(curr)
+                curr = parent_map[curr]
+            path.reverse() # Root to leaf
+            # Target level (1-indexed in users mind, 0 is root)
+            idx = min(level, len(path)-1)
+            return path[idx] if path else wbs_id
+
+        # 2. Map each task to its target-level WBS parent
+        tasks_copy = tasks_df.copy()
+        tasks_copy['target_wbs_id'] = tasks_copy['wbs_id'].apply(lambda x: get_parent_at_level(x, target_level))
+        
+        # 3. Get deterministic metrics
+        analysis = self.get_deterministic_analysis(version_id)
+        activity_metrics = analysis.get('activityAnalysis', {})
+        
+        metrics_list = []
+        for tid, m in activity_metrics.items():
+            metrics_list.append({
+                'task_id': tid,
+                'status': m.get('status_enum'),
+                'float_hrs': m.get('float_hrs', 0)
+            })
+        metrics_df = pd.DataFrame(metrics_list)
+        
+        # Join
+        merged = tasks_copy.merge(metrics_df, on='task_id', how='left')
+        merged['drtn'] = pd.to_numeric(merged.get('target_drtn_hr_cnt', 0), errors='coerce').fillna(0) / self.hours_per_day
+        
+        # 4. Aggregate by target_wbs_id
+        summary = merged.groupby('target_wbs_id').agg(
+            total_tasks=('task_id', 'count'),
+            duration_days=('drtn', 'sum'),
+            avg_float_hrs=('float_hrs', 'mean'),
+            completed=('status', lambda x: (x == 'COMPLETED').sum()),
+            in_progress=('status', lambda x: (x == 'IN_PROGRESS').sum()),
+            not_started=('status', lambda x: (x == 'NOT_STARTED').sum())
+        ).reset_index()
+        
+        # 5. Limit rows and aggregate "Others" if too large (OpenAI TPM optimization)
+        MAX_ROWS = 35
+        if len(summary) > MAX_ROWS:
+            summary = summary.sort_values('total_tasks', ascending=False)
+            top_parts = summary.head(MAX_ROWS).copy()
+            others_part = summary.iloc[MAX_ROWS:]
+            
+            others_row = {
+                'target_wbs_id': 'OTHERS_BUCKET',
+                'total_tasks': others_part['total_tasks'].sum(),
+                'duration_days': others_part['duration_days'].sum(),
+                'avg_float_hrs': others_part['avg_float_hrs'].mean(),
+                'completed': others_part['completed'].sum(),
+                'in_progress': others_part['in_progress'].sum(),
+                'not_started': others_part['not_started'].sum()
+            }
+            summary = pd.concat([top_parts, pd.DataFrame([others_row])], ignore_index=True)
+
+        results = []
+        for _, row in summary.iterrows():
+            w_id = row['target_wbs_id']
+            name = "Remaining Disciplines (Aggregated)" if w_id == 'OTHERS_BUCKET' else wbs_info.get(w_id, {}).get('wbs_name', 'Unknown')
+            code = "..." if w_id == 'OTHERS_BUCKET' else wbs_info.get(w_id, {}).get('wbs_short_name', '')
+            
+            results.append({
+                "discipline": f"{code} {name}".strip(),
+                "activities": int(row['total_tasks']),
+                "duration_days": round(float(row['duration_days']), 0),
+                "avg_float": round(float(row['avg_float_hrs']), 1),
+                "status": f"{int(row['completed'])}C / {int(row['in_progress'])}IP / {int(row['not_started'])}NS"
+            })
+        return results
+
     def get_table_data(self, table_type: str = "TASK", search: str = "", limit: int = 100, offset: int = 0, source_id: Optional[str] = None) -> Dict:
         """Fetch and format paginated table data from a specific version ID"""
         source = self.get_version(source_id)

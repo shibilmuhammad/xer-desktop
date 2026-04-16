@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
-import { Upload, X, Send, BarChart2, Activity, Calendar, Clock, User, Table as TableIcon, Search, ChevronLeft, ChevronRight, Filter, Eye, ListTree, Link as LinkIcon, Info, CheckCircle, Circle, Loader2, AlertTriangle, TrendingDown, Zap, Trash2 } from 'lucide-react'
+import { Upload, X, Send, BarChart2, Activity, Calendar, Clock, User, Table as TableIcon, Search, ChevronLeft, ChevronRight, Filter, Eye, ListTree, Link as LinkIcon, Info, CheckCircle, Circle, Loader2, AlertTriangle, TrendingDown, Zap, Trash2, Globe, Cpu } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import logo from './assets/logo.png'
@@ -28,6 +28,8 @@ function App() {
   const [messages, setMessages] = useState([])
   const [versions, setVersions] = useState([])
   const [selectedVersionId, setSelectedVersionId] = useState('baseline')
+  const [aiConfig, setAiConfig] = useState({ provider: 'openai', model: 'gpt-4o', has_openai_key: false })
+  const [isUpdatingAI, setIsUpdatingAI] = useState(false)
   const chatEndRef = useRef(null)
 
   const scrollToBottom = () => {
@@ -81,6 +83,29 @@ function App() {
     }
   }
 
+  const fetchAIConfig = async () => {
+    try {
+      const res = await axios.get('/api/settings')
+      setAiConfig(res.data)
+    } catch (err) {
+      console.error('Failed to fetch AI config', err)
+    }
+  }
+
+  const handleUpdateAI = async (provider) => {
+    setIsUpdatingAI(true)
+    try {
+      const formData = new FormData()
+      formData.append('provider', provider)
+      const res = await axios.post('/api/settings/update', formData)
+      setAiConfig(res.data)
+    } catch (err) {
+      console.error('Failed to update AI config', err)
+    } finally {
+      setIsUpdatingAI(false)
+    }
+  }
+
   useEffect(() => {
     const checkExistingData = async () => {
       try {
@@ -94,6 +119,7 @@ function App() {
             setSelectedVersionId(bl.id)
           }
         }
+        fetchAIConfig()
       } catch (err) {
         console.error('Initialization check failed', err)
       }
@@ -390,7 +416,7 @@ function App() {
                 >
                   <button 
                     onClick={(e) => handleDeleteVersion(e, v.id)}
-                    className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
+                    className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100 shadow-sm'}`}
                     title="Delete baseline"
                   >
                     <Trash2 size={14} />
@@ -474,7 +500,7 @@ function App() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col bg-white">
+      <div className="flex-1 flex flex-col bg-white overflow-hidden">
         <div className="h-14 border-b border-gray-100 flex items-center px-6 gap-4 text-sm bg-gray-50/50">
           <div className="h-2 w-2 rounded-full bg-blue-500"></div>
           <span className="font-medium text-gray-600">Project:</span>
@@ -606,7 +632,37 @@ function App() {
                       <h3 className="text-xl font-black text-gray-900 tracking-tight">AI Audit Assistant</h3>
                       <p className="text-xs text-gray-400 font-medium tracking-tight">Contextual P6 forensic analysis</p>
                     </div>
-                    <span className="text-[10px] font-black uppercase tracking-widest bg-gray-100 text-gray-500 px-3 py-1.5 rounded-xl ml-auto border border-gray-200/50">
+
+                    {/* Compact Model Switcher in Header */}
+                    <div className="ml-auto flex items-center gap-1.5 p-1 bg-gray-50 border border-gray-200 rounded-2xl">
+                      <button 
+                        disabled={isUpdatingAI}
+                        onClick={() => handleUpdateAI('openai')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all ${
+                          aiConfig.provider === 'openai' 
+                          ? 'bg-red-600 text-white shadow-sm' 
+                          : 'text-gray-400 hover:text-gray-600'
+                        } ${!aiConfig.has_openai_key && 'opacity-30 cursor-not-allowed'}`}
+                        title={!aiConfig.has_openai_key ? "OpenAI API Key missing" : "GPT-4o Cloud"}
+                      >
+                        <Globe size={12} /> Cloud
+                        {aiConfig.provider === 'openai' && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
+                      </button>
+                      <button 
+                        disabled={isUpdatingAI}
+                        onClick={() => handleUpdateAI('local')}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black transition-all ${
+                          aiConfig.provider === 'local' 
+                          ? 'bg-blue-600 text-white shadow-sm' 
+                          : 'text-gray-400 hover:text-gray-600'
+                        }`}
+                      >
+                        <Cpu size={12} /> Local
+                        {aiConfig.provider === 'local' && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
+                      </button>
+                    </div>
+
+                    <span className="text-[10px] font-black uppercase tracking-widest bg-gray-100 text-gray-500 px-3 py-1.5 rounded-xl border border-gray-200/50">
                       Session: {stats?.data_source}
                     </span>
                  </div>
