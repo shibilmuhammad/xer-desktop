@@ -482,7 +482,7 @@ class XERDataStore:
             })
         return results
 
-    def get_table_data(self, table_type: str = "TASK", search: str = "", limit: int = 100, offset: int = 0, source_id: Optional[str] = None) -> Dict:
+    def get_table_data(self, table_type: str = "TASK", search: str = "", limit: int = 100, offset: int = 0, source_id: Optional[str] = None, filter_type: str = "ALL") -> Dict:
         """Fetch and format paginated table data from a specific version ID"""
         source = self.get_version(source_id)
         if not source or 'df' not in source: return {"records": [], "total": 0}
@@ -501,11 +501,27 @@ class XERDataStore:
             
         df = source['df'][df_key].copy()
         
-        # Search & Filter
+        # 1. Search Logic
         if search:
             search_cols = ['task_name', 'task_code'] if df_key == 'tasks' else df.columns[:3]
             mask = df[search_cols].apply(lambda x: x.str.contains(search, case=False, na=False)).any(axis=1)
             df = df[mask]
+            
+        # 2. Analytical Filtering (pre-pagination)
+        if df_key == 'tasks' and filter_type != 'ALL':
+            analysis = self.get_deterministic_analysis(source_id)
+            metrics = analysis.get('activityAnalysis', {})
+            
+            def check_filter(tid):
+                m = metrics.get(tid, {})
+                if filter_type == 'CRITICAL': return m.get('is_critical_p6', False)
+                if filter_type == 'NEG_FLOAT': return (m.get('float_hrs', 0) < 0)
+                if filter_type == 'DELAYED': return (m.get('delay_days', 0) > 0)
+                if filter_type == 'DELAYED_CRITICAL': return m.get('delay_float_category') == 'DELAYED_CRITICAL'
+                if filter_type == 'DELAYED_NEGATIVE': return m.get('delay_float_category') == 'DELAYED_NEGATIVE'
+                return True
+            
+            df = df[df['task_id'].apply(check_filter)]
             
         total = len(df)
         

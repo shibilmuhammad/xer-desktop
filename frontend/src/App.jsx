@@ -67,7 +67,7 @@ function App() {
 
   const fetchTableData = async () => {
     try {
-      const res = await axios.get(`/api/xer-data?table=${viewerTable}&page=${tablePage}&search=${tableSearch}&version_id=${selectedVersionId}`)
+      const res = await axios.get(`/api/xer-data?table=${viewerTable}&page=${tablePage}&search=${tableSearch}&version_id=${selectedVersionId}&filter=${viewerFilter}`)
       setTableData(res.data)
     } catch (err) {
       console.error('Failed to fetch table data', err)
@@ -236,7 +236,7 @@ function App() {
     if (viewMode === 'controller' && baselineLoaded) {
       fetchTableData()
     }
-  }, [viewMode, viewerTable, tablePage, tableSearch, selectedVersionId])
+  }, [viewMode, viewerTable, tablePage, tableSearch, selectedVersionId, viewerFilter])
 
   const handleAsk = async () => {
     if (!query || isTyping) return
@@ -411,7 +411,7 @@ function App() {
               versions.filter(v => v.type === 'baseline').map((v) => (
                 <div 
                   key={v.id} 
-                  onClick={() => { setSelectedVersionId(v.id); setViewMode('viewer'); }}
+                  onClick={() => { setSelectedVersionId(v.id); }}
                   className={`p-3.5 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 shadow-blue-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}
                 >
                   <button 
@@ -450,7 +450,7 @@ function App() {
               {versions.filter(v => v.type === 'update').map((v) => (
                 <div 
                   key={v.id} 
-                  onClick={() => { setSelectedVersionId(v.id); setViewMode('viewer'); }}
+                  onClick={() => { setSelectedVersionId(v.id); }}
                   className={`p-3.5 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 shadow-blue-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}
                 >
                   <button 
@@ -860,7 +860,7 @@ function App() {
                   ].map(f => (
                     <button 
                       key={f.id}
-                      onClick={() => setViewerFilter(f.id)}
+                      onClick={() => { setViewerFilter(f.id); setTablePage(1); }}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter border transition-all ${viewerFilter === f.id ? f.color + ' ring-2 ring-offset-1 focus:ring-blue-500' : 'bg-white border-gray-100 text-gray-400 hover:border-gray-300'}`}
                     >
                       {f.label}
@@ -955,19 +955,7 @@ function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {tableData.records.length > 0 ? tableData.records
-                        .filter(row => {
-                          if (viewerFilter === 'ALL') return true;
-                          const analysis = row._analysis || {};
-                          if (viewerFilter === 'CRITICAL') return analysis.is_critical;
-                          if (viewerFilter === 'NEG_FLOAT') return (analysis.float_hrs || 0) < 0;
-                          if (viewerFilter === 'POS_FLOAT') return (analysis.float_hrs || 0) > 0;
-                          if (viewerFilter === 'DELAYED') return analysis.delay_days > 0;
-                          if (viewerFilter === 'DELAYED_CRITICAL') return analysis.delay_float_category === 'DELAYED_CRITICAL';
-                          if (viewerFilter === 'DELAYED_NEGATIVE') return analysis.delay_float_category === 'DELAYED_NEGATIVE';
-                          return true;
-                        })
-                        .map((row, i) => {
+                      {tableData.records.length > 0 ? tableData.records.map((row, i) => {
                           // USE DETERMINISTIC ANALYTICS FROM BACKEND
                           const analysis = row._analysis || {};
                           const status = analysis.status;

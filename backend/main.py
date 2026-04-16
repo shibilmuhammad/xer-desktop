@@ -113,10 +113,10 @@ async def delete_version(version_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/xer-data")
-async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, limit: int = 100, version_id: Optional[str] = None):
+async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, limit: int = 100, version_id: Optional[str] = None, filter: str = "ALL"):
     offset = (page - 1) * limit
     try:
-        data = analyzer.data_store.get_table_data(table, search, limit, offset, source_id=version_id)
+        data = analyzer.data_store.get_table_data(table, search, limit, offset, source_id=version_id, filter_type=filter)
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
