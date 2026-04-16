@@ -23,9 +23,9 @@ class XERAnalyzer:
             
         self._cache = {}
 
-    def get_basic_stats(self) -> Dict[str, Any]:
-        """Wrapper for backward compatibility"""
-        return self.data_store.compute_basic_stats()
+    def get_basic_stats(self, version_id: Optional[str] = None) -> Dict[str, Any]:
+        """Wrapper for backward compatibility and version-specific stats"""
+        return self.data_store.compute_basic_stats(version_id)
 
     def analyze(self, query: str) -> Dict[str, Any]:
         """Main entry point: Route -> Execute -> structured dict"""

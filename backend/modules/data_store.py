@@ -73,9 +73,10 @@ class XERDataStore:
                 return update
         return None
 
-    def compute_basic_stats(self) -> Dict:
-        if self._cached_stats: return self._cached_stats
-        source = self.get_latest()
+    def compute_basic_stats(self, version_id: Optional[str] = None) -> Dict:
+        if not version_id and self._cached_stats: return self._cached_stats
+        
+        source = self.get_version(version_id) if version_id else self.get_latest()
         if not source or 'tasks' not in source.get('df', {}): return {}
 
         tasks_df = source['df']['tasks'].copy()
@@ -121,7 +122,13 @@ class XERDataStore:
         summary = analysis.get('projectSummary', {})
         delay_matrix = summary.get('delayFloatMatrix', {})
         health_metrics = summary.get('healthMetrics', {})
-        stats['delay_matrix'] = {**delay_matrix, **health_metrics}
+        
+        # Merge all metrics ensuring projectDelayDays is included
+        stats['delay_matrix'] = {
+            **delay_matrix, 
+            **health_metrics, 
+            "projectDelayDays": summary.get('projectDelayDays', 0)
+        }
         stats['topDrivers'] = summary.get('topDrivers', [])
         stats['topRisks'] = summary.get('topRisks', [])
 
@@ -208,9 +215,24 @@ class XERDataStore:
         baseline_max_finish = max(baseline_map.values()) if baseline_map else df['_dt_target_end_date'].max()
         current_max_finish = df['_dt_target_end_date'].max()
         
-        project_delay_days = 0
+        # Finish Variance (Standard P6 comparison)
+        finish_variance = 0
         if pd.notnull(baseline_max_finish) and pd.notnull(current_max_finish):
-            project_delay_days = (current_max_finish - baseline_max_finish).days
+            finish_variance = (current_max_finish - baseline_max_finish).days
+
+        # Constraint Detection: If finish variance is flat, but we have negative float, 
+        # the "Real Delay" is the amount of negative float on the critical path.
+        max_neg_float_days = 0
+        if not df[df['float_hrs'] < 0].empty:
+            # We take the absolute value of the worst negative float
+            max_neg_float_days = abs(df['float_hrs'].min() / self.hours_per_day)
+
+        project_delay_days = finish_variance
+        is_constrained = False
+        
+        if finish_variance <= 0 and max_neg_float_days > 0:
+            is_constrained = True
+            project_delay_days = round(max_neg_float_days, 0)
 
         # 6. Schedule Quality Engine
         total_tasks = len(df)
@@ -230,9 +252,7 @@ class XERDataStore:
             score -= 20
             issues.append(f"Significant Negative Float ({neg_pct:.1f}%)")
             
-        is_constrained = False
-        if project_delay_days <= 0 and neg_pct > 15:
-            is_constrained = True
+        if is_constrained:
             score -= 10
             issues.append("Project delay hidden by constraints (Fixed finish date detected)")
 

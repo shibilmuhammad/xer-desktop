@@ -87,16 +87,11 @@ function App() {
         const res = await axios.get('/api/versions')
         if (res.data && res.data.length > 0) {
           setVersions(res.data)
-          // If a baseline exists, we consider it loaded
           const hasBaseline = res.data.some(v => v.type === 'baseline')
           if (hasBaseline) {
             setBaselineLoaded(true)
             const bl = res.data.find(v => v.type === 'baseline')
             setSelectedVersionId(bl.id)
-            
-            // Sync stats
-            const statsRes = await axios.get('/api/health')
-            setStats(statsRes.data)
           }
         }
       } catch (err) {
@@ -104,11 +99,24 @@ function App() {
       }
     }
     
-    // Only check existing data if setup is completed and base URL is updated
     if (isSetupComplete) {
       checkExistingData()
     }
   }, [isSetupComplete])
+
+  // Sync stats when version changes
+  useEffect(() => {
+    const syncStats = async () => {
+      if (!selectedVersionId) return
+      try {
+        const res = await axios.get(`/api/health?version_id=${selectedVersionId}`)
+        setStats(res.data)
+      } catch (err) {
+        console.error('Failed to sync health stats', err)
+      }
+    }
+    syncStats()
+  }, [selectedVersionId])
 
   // Setup Effect (IPC Listeners)
   useEffect(() => {
@@ -463,56 +471,6 @@ function App() {
             <TableIcon size={18} /> Project Controller
           </button>
         </div>
-
-        <hr className="my-6 border-gray-200" />
-
-        <h3 className="text-sm font-bold text-gray-700 mb-4 uppercase tracking-wider">Schedule Health</h3>
-        <div className="space-y-4">
-          <div className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-black text-gray-400 uppercase">Health Score</span>
-              <span className={`text-xs font-black px-2 py-0.5 rounded-full ${
-                stats?.delay_matrix?.healthStatus === 'Good' ? 'bg-green-100 text-green-700' :
-                stats?.delay_matrix?.healthStatus === 'Warning' ? 'bg-orange-100 text-orange-700' :
-                'bg-red-100 text-red-700'
-              }`}>
-                {stats?.delay_matrix?.projectHealthScore || 0}/100
-              </span>
-            </div>
-            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div 
-                className={`h-full transition-all duration-1000 ${
-                  stats?.delay_matrix?.healthStatus === 'Good' ? 'bg-green-500' :
-                  stats?.delay_matrix?.healthStatus === 'Warning' ? 'bg-orange-500' :
-                  'bg-red-500'
-                }`}
-                style={{ width: `${stats?.delay_matrix?.projectHealthScore || 0}%` }}
-              ></div>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-gray-500 flex items-center gap-2"><Activity size={12} /> Activities</span>
-              <span className="font-bold">{stats?.total_activities || 0}</span>
-            </div>
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-gray-500 flex items-center gap-2"><Clock size={12} /> Critical Path</span>
-              <span className="font-bold text-red-600">{stats?.critical_count || 0}</span>
-            </div>
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-gray-500 flex items-center gap-2"><AlertTriangle size={12} /> Neg Float</span>
-              <span className="font-bold text-red-700">{stats?.negative_float_count || 0}</span>
-            </div>
-          </div>
-          
-          {stats?.delay_matrix?.isConstrained && (
-             <div className="mt-4 p-2.5 bg-red-50 border border-red-100 rounded-lg flex items-start gap-2 animate-pulse">
-               <AlertTriangle size={14} className="text-red-600 shrink-0 mt-0.5" />
-               <p className="text-[10px] font-bold text-red-800 leading-tight">Project finish likely constrained. Delays may be hidden.</p>
-             </div>
-          )}
-        </div>
       </div>
 
       {/* Main Content */}
@@ -529,33 +487,24 @@ function App() {
         {viewMode === 'audit' ? (
           <div className="flex-1 overflow-y-auto bg-gray-50/50 relative pb-48">
             {/* The Persistent Project Audit Dashboard */}
-            <div className="mx-6 my-6 bg-gray-900 rounded-[2.5rem] shadow-2xl relative overflow-hidden flex-shrink-0 border border-white/10">
+            <div className="mx-6 my-6 bg-gray-900 rounded-[2.5rem] shadow-2xl relative overflow-hidden flex flex-col border border-white/10 max-h-[500px]">
               <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
                 <BarChart2 size={240} />
               </div>
               
-              <div className="max-w-6xl mx-auto p-8 relative z-10 w-full">
-                <div className="flex items-center justify-between mb-8">
+              {/* Sticky Header */}
+              <div className="p-8 pb-4 relative z-20 w-full border-b border-white/5 bg-gray-900/50 backdrop-blur-md">
+                <div className="flex items-center justify-between">
                   <h4 className="text-2xl font-bold flex items-center gap-3 text-white">
                     <Activity size={24} className="text-blue-500" />
                     Project Audit Summary
                   </h4>
-                  <div className="flex flex-col items-end">
-                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">P6 Precision Score</span>
-                    <div className="flex items-center gap-3">
-                      <span className={`text-4xl font-black ${
-                        stats?.delay_matrix?.healthStatus === 'Good' ? 'text-green-400' :
-                        stats?.delay_matrix?.healthStatus === 'Warning' ? 'text-orange-400' :
-                        'text-red-400'
-                      }`}>
-                        {stats?.delay_matrix?.projectHealthScore || 0}
-                      </span>
-                      <span className="text-sm font-bold text-gray-500">/ 100</span>
-                    </div>
-                  </div>
                 </div>
+              </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Scrollable Content Area */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-8 pt-6 relative z-10 w-full">
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-4">
                   {/* Left Column: Health and Score Metrics */}
                   <div className="col-span-1 border-r border-white/10 pr-8">
                     <h5 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-4">Core Metrics</h5>

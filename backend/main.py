@@ -61,8 +61,8 @@ async def upload_xer(file: UploadFile = File(...), file_type: str = Form("baseli
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
-async def get_health():
-    return analyzer.get_basic_stats()
+async def get_health(version_id: Optional[str] = None):
+    return analyzer.get_basic_stats(version_id)
 
 @app.get("/critical-path")
 async def get_critical_path():
