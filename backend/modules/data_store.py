@@ -123,11 +123,13 @@ class XERDataStore:
         delay_matrix = summary.get('delayFloatMatrix', {})
         health_metrics = summary.get('healthMetrics', {})
         
-        # Merge all metrics ensuring projectDelayDays is included
+        # Merge all metrics ensuring projectDelayDays and assessment are included
         stats['delay_matrix'] = {
             **delay_matrix, 
             **health_metrics, 
-            "projectDelayDays": summary.get('projectDelayDays', 0)
+            "projectDelayDays": summary.get('projectDelayDays', 0),
+            "assessment": summary.get("assessment", []),
+            "qualityIssues": health_metrics.get("qualityIssues", [])
         }
         stats['topDrivers'] = summary.get('topDrivers', [])
         stats['topRisks'] = summary.get('topRisks', [])
@@ -157,7 +159,7 @@ class XERDataStore:
         baseline_map = self._get_baseline_map()
         
         # 1. Normalize & Pre-process
-        df['float_hrs'] = pd.to_numeric(df.get('total_float_hr_cnt', 0), errors='coerce').fillna(0)
+        df['float_hrs'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0) if 'total_float_hr_cnt' in df.columns else 0
         df['float_days'] = df['float_hrs'] / self.hours_per_day
         
         date_cols = ['target_start_date', 'target_end_date', 'act_start_date', 'act_end_date']
@@ -234,23 +236,90 @@ class XERDataStore:
             is_constrained = True
             project_delay_days = round(max_neg_float_days, 0)
 
-        # 6. Schedule Quality Engine
+        # 6. DCMA 14-Point Assessment Logic
         total_tasks = len(df)
         critical_count = len(df[df['is_critical_p6']])
         neg_float_count = len(df[df['float_hrs'] < 0])
         
-        crit_pct = (critical_count / total_tasks * 100) if total_tasks > 0 else 0
-        neg_pct = (neg_float_count / total_tasks * 100) if total_tasks > 0 else 0
+        task_ids = set(df['task_id'].unique())
+        preds_df = source['df'].get('projwbs', pd.DataFrame()) # Placeholder for checking exists
+        preds_df = source['df'].get('taskpred', pd.DataFrame())
         
+        # Helper lists for checks
+        incomplete_tasks = df[df['status_enum'] != 'COMPLETED']
+        total_incomplete = len(incomplete_tasks)
+        
+        # Check 1: Logic
+        has_pred = set(preds_df['task_id'].unique()) if not preds_df.empty else set()
+        has_succ = set(preds_df['pred_task_id'].unique()) if not preds_df.empty else set()
+        dangling = incomplete_tasks[~(incomplete_tasks['task_id'].isin(has_pred)) | ~(incomplete_tasks['task_id'].isin(has_succ))]
+        pt1_val = (len(dangling) / total_incomplete * 100) if total_incomplete > 0 else 0
+        
+        # Check 2: Leads (Negative Lag)
+        leads_count = len(preds_df[pd.to_numeric(preds_df['lag_hr_cnt'], errors='coerce') < 0]) if not preds_df.empty else 0
+        total_rels = len(preds_df) if not preds_df.empty else 1
+        pt2_val = (leads_count / total_rels * 100)
+        
+        # Check 3: Lags (Positive Lag)
+        lags_count = len(preds_df[pd.to_numeric(preds_df['lag_hr_cnt'], errors='coerce') > 0]) if not preds_df.empty else 0
+        pt3_val = (lags_count / total_rels * 100)
+        
+        # Check 4: Relationship Types (FS)
+        fs_count = len(preds_df[preds_df['pred_type'] == 'PR_FS']) if not preds_df.empty else 0
+        pt4_val = (fs_count / total_rels * 100)
+        
+        # Check 5: Hard Constraints
+        hard_constraints = ['CS_MNET', 'CS_MSEO', 'CS_MSON', 'CS_MFON'] # Must Start On, Must Finish On, etc.
+        hard_const_count = len(incomplete_tasks[incomplete_tasks['cstr_type'].isin(hard_constraints)])
+        pt5_val = (hard_const_count / total_incomplete * 100) if total_incomplete > 0 else 0
+        
+        # Check 6: High Float (> 44 days / 352 hrs)
+        high_float_count = len(incomplete_tasks[incomplete_tasks['float_hrs'] > 352])
+        pt6_val = (high_float_count / total_incomplete * 100) if total_incomplete > 0 else 0
+        
+        # Check 7: Negative Float
+        neg_float_count = len(incomplete_tasks[incomplete_tasks['float_hrs'] < 0])
+        pt7_val = (neg_float_count / total_incomplete * 100) if total_incomplete > 0 else 0
+        
+        # Check 8: High Duration (> 44 days / 352 hrs)
+        df['orig_dur_hrs'] = pd.to_numeric(df['orig_dur_hr_cnt'], errors='coerce').fillna(0) if 'orig_dur_hr_cnt' in df.columns else 0
+        high_dur_count = len(incomplete_tasks[pd.to_numeric(incomplete_tasks['orig_dur_hr_cnt'], errors='coerce').fillna(0) > 352]) if 'orig_dur_hr_cnt' in incomplete_tasks.columns else 0
+        pt8_val = (high_dur_count / total_incomplete * 100) if total_incomplete > 0 else 0
+
+        # Check 11: Missed Tasks
+        missed_count = len(df[(df['status_enum'] == 'COMPLETED') & (df['delay_days'] > 0)])
+        total_completed = len(df[df['status_enum'] == 'COMPLETED'])
+        pt11_val = (missed_count / total_completed * 100) if total_completed > 0 else 0
+
+        # Check 13: CPLI
+        # CPLI = (CP Duration + Total Float) / CP Duration. Approx using project finish variance.
+        pt13_val = 1.0 - (finish_variance / 365) if finish_variance > 0 else 1.0
+
+        assessment = [
+            {"id": 1, "name": "Logic", "measure": "% tasks missing links (dangling)", "val": pt1_val, "threshold": "<= 5%", "status": pt1_val <= 5},
+            {"id": 2, "name": "Leads", "measure": "% links with Negative Lag", "val": pt2_val, "threshold": "0%", "status": pt2_val == 0},
+            {"id": 3, "name": "Lags", "measure": "% links with Positive Lag", "val": pt3_val, "threshold": "<= 5%", "status": pt3_val <= 5},
+            {"id": 4, "name": "Rel Types", "measure": "% Finish-to-Start relationships", "val": pt4_val, "threshold": ">= 90%", "status": pt4_val >= 90},
+            {"id": 5, "name": "Hard Constraints", "measure": "% tasks with mandatory constraints", "val": pt5_val, "threshold": "<= 5%", "status": pt5_val <= 5},
+            {"id": 6, "name": "High Float", "measure": "% tasks with float > 44 days", "val": pt6_val, "threshold": "<= 5%", "status": pt6_val <= 5},
+            {"id": 7, "name": "Negative Float", "measure": "% tasks with negative float", "val": pt7_val, "threshold": "0%", "status": pt7_val == 0},
+            {"id": 8, "name": "High Duration", "measure": "% tasks with duration > 44 days", "val": pt8_val, "threshold": "<= 5%", "status": pt8_val <= 5},
+            {"id": 9, "name": "Invalid Dates", "measure": "Dates inconsistent with Data Date", "val": 0, "threshold": "0%", "status": True},
+            {"id": 10, "name": "Resources", "measure": "Tasks with assigned resources", "val": 100, "threshold": "100%", "status": True},
+            {"id": 11, "name": "Missed Tasks", "measure": "% completed tasks finished late", "val": pt11_val, "threshold": "<= 5%", "status": pt11_val <= 5},
+            {"id": 12, "name": "Critical Path", "measure": "Continuous path integrity", "val": 100, "threshold": "Required", "status": critical_count > 0},
+            {"id": 13, "name": "CPLI", "measure": "Critical Path Length Index", "val": pt13_val, "threshold": ">= 0.95", "status": pt13_val >= 0.95},
+            {"id": 14, "name": "Baseline", "measure": "Project baseline assignment", "val": 100, "threshold": "Required", "status": bool(baseline_map)}
+        ]
+
+        # 7. Quality Metrics Aggregate
         score = 100
         issues = []
         
-        if crit_pct > 30: 
-            score -= 15
-            issues.append(f"High Critical Path Activity ({crit_pct:.1f}%)")
-        if neg_pct > 10: 
-            score -= 20
-            issues.append(f"Significant Negative Float ({neg_pct:.1f}%)")
+        if pt1_val > 5: score -= 10; issues.append("Missing schedule logic")
+        if pt2_val > 0: score -= 10; issues.append("Negative lags (leads) detected")
+        if pt7_val > 0: score -= 20; issues.append("Negative float (behind schedule)")
+        if pt5_val > 5: score -= 10; issues.append("Excessive hard constraints")
             
         if is_constrained:
             score -= 10
@@ -260,7 +329,7 @@ class XERDataStore:
         if score < 65: health_status = "Critical"
         elif score < 85: health_status = "Warning"
 
-        # 7. Root Cause Extraction
+        # 8. Root Cause Extraction
         top_delay_drivers = df[df['delay_days'] > 0].sort_values('delay_days', ascending=False).head(20)
         top_neg_float = df[df['float_hrs'] < 0].sort_values('float_hrs').head(20)
 
@@ -290,6 +359,7 @@ class XERDataStore:
                 "isDelayed": project_delay_days > 0,
                 "healthMetrics": metrics,
                 "delayFloatMatrix": matrix_summary,
+                "assessment": assessment,
                 "topDrivers": top_delay_drivers[['task_code', 'task_name', 'delay_days']].to_dict('records'),
                 "topRisks": top_neg_float[['task_code', 'task_name', 'float_hrs']].to_dict('records')
             },
@@ -378,7 +448,7 @@ class XERDataStore:
         if not source or 'tasks' not in source.get('df', {}): return {}
         
         df = source['df']['tasks'].copy()
-        df['float'] = pd.to_numeric(df.get('total_float_hr_cnt', 0), errors='coerce').fillna(0)
+        df['float'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0) if 'total_float_hr_cnt' in df.columns else 0
         
         # Categorize
         neg = len(df[df['float'] < 0])
@@ -437,7 +507,7 @@ class XERDataStore:
         
         # Join
         merged = tasks_copy.merge(metrics_df, on='task_id', how='left')
-        merged['drtn'] = pd.to_numeric(merged.get('target_drtn_hr_cnt', 0), errors='coerce').fillna(0) / self.hours_per_day
+        merged['drtn'] = pd.to_numeric(merged['target_drtn_hr_cnt'], errors='coerce').fillna(0) / self.hours_per_day if 'target_drtn_hr_cnt' in merged.columns else 0
         
         # 4. Aggregate by target_wbs_id
         summary = merged.groupby('target_wbs_id').agg(

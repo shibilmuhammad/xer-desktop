@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
-import { Upload, X, Send, BarChart2, Activity, Calendar, Clock, User, Table as TableIcon, Search, ChevronLeft, ChevronRight, Filter, Eye, ListTree, Link as LinkIcon, Info, CheckCircle, Circle, Loader2, AlertTriangle, TrendingDown, Zap, Trash2, Globe, Cpu } from 'lucide-react'
+import { Upload, X, Send, BarChart2, Activity, Calendar, Clock, User, Table as TableIcon, Search, ChevronLeft, ChevronRight, Filter, Eye, ListTree, Link as LinkIcon, Info, CheckCircle, Circle, Loader2, AlertTriangle, TrendingDown, Zap, Trash2, Globe, Cpu, Maximize2, Minimize2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import logo from './assets/logo.png'
@@ -30,15 +30,67 @@ function App() {
   const [selectedVersionId, setSelectedVersionId] = useState('baseline')
   const [aiConfig, setAiConfig] = useState({ provider: 'openai', model: 'gpt-4o', has_openai_key: false })
   const [isUpdatingAI, setIsUpdatingAI] = useState(false)
+  
+  // Independent Controller Chat State
+  const [controllerMessages, setControllerMessages] = useState([])
+  const [controllerQuery, setControllerQuery] = useState('')
+  const [isControllerChatOpen, setIsControllerChatOpen] = useState(false)
+  const [isControllerTyping, setIsControllerTyping] = useState(false)
+  const [isControllerChatExpanded, setIsControllerChatExpanded] = useState(false)
+  const [controllerChatPos, setControllerChatPos] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartPos = useRef({ x: 0, y: 0 })
+  
   const chatEndRef = useRef(null)
+  const controllerChatEndRef = useRef(null)
 
   const scrollToBottom = () => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+  
+  const scrollControllerToBottom = () => {
+    controllerChatEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
   useEffect(() => {
     scrollToBottom()
   }, [messages, isTyping])
+
+  useEffect(() => {
+    if (isControllerChatOpen) {
+      scrollControllerToBottom()
+    }
+  }, [controllerMessages, isControllerTyping, isControllerChatOpen])
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!isDragging) return
+      setControllerChatPos({
+        x: e.clientX - dragStartPos.current.x,
+        y: e.clientY - dragStartPos.current.y
+      })
+    }
+    const handleMouseUp = () => setIsDragging(false)
+    
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove)
+      window.addEventListener('mouseup', handleMouseUp)
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [isDragging])
+
+  const handleDragStart = (e) => {
+    // Only allow drag on the header itself, not children buttons
+    if (e.target.closest('button')) return
+    setIsDragging(true)
+    dragStartPos.current = { 
+      x: e.clientX - controllerChatPos.x, 
+      y: e.clientY - controllerChatPos.y 
+    }
+  }
 
   const handleUpload = async (e, type = 'baseline') => {
     const file = e.target.files[0]
@@ -252,6 +304,24 @@ function App() {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error connecting to the schedule analyzer.' }])
     } finally {
       setIsTyping(false)
+    }
+  }
+
+  const handleControllerAsk = async () => {
+    if (!controllerQuery || isControllerTyping) return
+    const userMsg = { role: 'user', content: controllerQuery }
+    setControllerMessages(prev => [...prev, userMsg])
+    setControllerQuery('')
+    setIsControllerTyping(true)
+    
+    try {
+      // Pass a context hint that we are in the Controller/Table view for comparisons
+      const res = await axios.post('/api/ask', new URLSearchParams({ query: controllerQuery }))
+      setControllerMessages(prev => [...prev, { role: 'assistant', content: res.data.response }])
+    } catch (err) {
+      setControllerMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error connecting to the controller intelligence engine.' }])
+    } finally {
+      setIsControllerTyping(false)
     }
   }
 
@@ -623,6 +693,64 @@ function App() {
 
             {/* --- AI CHAT SECTION --- */}
             <div className="max-w-6xl mx-auto px-6 py-6 pb-24">
+               {/* 14-Point Assessment Table (DCMA Standard) */}
+               {stats?.delay_matrix?.assessment && (
+                 <div className="mb-10 bg-gray-900 rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden">
+                    <div className="p-8 border-b border-white/5 flex items-center justify-between bg-gray-900/50 backdrop-blur-md sticky top-0 z-20">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                          <ListTree size={20} className="text-white" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-black text-white tracking-tight">Assessment Parameters & Scoring</h3>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Forensic quality methodology (DCMA-14 Standard)</p>
+                        </div>
+                      </div>
+                      <div className="px-5 py-2.5 bg-gray-800 rounded-2xl border border-white/5">
+                        <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest mr-3">Status:</span>
+                        <span className={`text-xs font-black uppercase tracking-tighter ${stats.delay_matrix.healthMetrics?.projectHealthScore > 80 ? 'text-green-400' : 'text-orange-400'}`}>
+                          {stats.delay_matrix.healthMetrics?.healthStatus} Quality
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-white/5">
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">#</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Check Name</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">What is Measured</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Threshold</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Scoring Rule</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                          {stats.delay_matrix.assessment.map((point) => (
+                            <tr key={point.id} className="hover:bg-white/[0.02] transition-colors group">
+                              <td className="px-8 py-5 text-sm font-black text-blue-500/70">{point.id}</td>
+                              <td className="px-8 py-5 text-sm font-bold text-gray-100 group-hover:text-white transition-colors">{point.name}</td>
+                              <td className="px-8 py-5 text-[11px] text-gray-400 font-medium leading-relaxed max-w-xs">{point.measure}</td>
+                              <td className="px-8 py-5 text-xs font-black text-gray-300 font-mono tracking-tighter">{point.threshold}</td>
+                              <td className="px-8 py-5">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_8px] ${point.status ? 'bg-green-500 shadow-green-500/40' : 'bg-red-500 shadow-red-500/40'}`}></div>
+                                  <span className={`text-[11px] font-black uppercase tracking-tighter ${point.status ? 'text-green-400' : 'text-red-400'}`}>
+                                    {point.status ? 'Pass' : 'Fail'} if {point.threshold}
+                                  </span>
+                                  <span className="ml-auto text-[10px] font-bold text-gray-600 bg-black/20 px-2 py-0.5 rounded border border-white/5">
+                                    Actual: {typeof point.val === 'number' ? point.val.toFixed(1) + '%' : point.val}
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                 </div>
+               )}
+
                <div className="bg-white rounded-[2.5rem] border border-gray-200 shadow-sm p-10 relative flex flex-col min-h-[500px]">
                  <div className="flex items-center gap-3 mb-10 border-b border-gray-100 pb-5">
                     <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-200">
@@ -1078,6 +1206,156 @@ function App() {
                   <ChevronRight size={16} className="text-gray-600" />
                 </button>
               </div>
+            </div>
+            
+            {/* Controller Intelligence - Independent Floating Chat */}
+            <div 
+              style={{ transform: `translate(${controllerChatPos.x}px, ${controllerChatPos.y}px)` }}
+              className={`fixed bottom-8 right-8 z-[100] flex flex-col items-end gap-4 transition-all duration-500 ease-out ${isDragging ? 'transition-none' : ''} ${isControllerChatExpanded ? 'w-[800px] h-[85vh]' : 'w-[400px] h-[600px]'}`}
+            >
+              {isControllerChatOpen && (
+                <div className="w-full h-full bg-white rounded-[2rem] shadow-2xl border border-gray-100 flex flex-col overflow-hidden animate-in slide-in-from-bottom-8 fade-in duration-300">
+                  {/* Header - Drag Handle */}
+                  <div 
+                    onMouseDown={handleDragStart}
+                    className="p-6 bg-gray-900 flex items-center justify-between cursor-move select-none"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-blue-500 rounded-xl shadow-lg shadow-blue-500/20">
+                        <Zap size={18} className="text-white" />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-white uppercase tracking-widest">Controller Intelligence</h4>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></div>
+                          <span className="text-[10px] font-bold text-gray-400">Context: Table Analytics</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button 
+                        onClick={() => setIsControllerChatExpanded(!isControllerChatExpanded)}
+                        className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"
+                        title={isControllerChatExpanded ? "Collapse Chat" : "Expand Chat"}
+                      >
+                        {isControllerChatExpanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                      </button>
+                      <button 
+                        onClick={() => setIsControllerChatOpen(false)}
+                        className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg transition-all"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Messages */}
+                  <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-gray-50/30">
+                    {controllerMessages.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-center px-4 space-y-4">
+                        <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center">
+                          <Cpu size={32} className="text-blue-500 opacity-40" />
+                        </div>
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-relaxed">
+                          Ask about planned dates, comparisons,<br/>or negative float drivers in this view.
+                        </p>
+                      </div>
+                    ) : (
+                      controllerMessages.map((m, i) => (
+                        <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                          <div className={`max-w-[90%] rounded-[1.5rem] px-5 py-4 text-sm shadow-sm transition-all ${
+                            m.role === 'user' 
+                              ? 'bg-blue-600 text-white rounded-tr-none' 
+                              : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none ring-1 ring-black/5'
+                          }`}>
+                            {m.role === 'assistant' ? (
+                                typeof m.content === 'object' && m.content !== null ? (
+                                  <div className="ai-structured-response flex flex-col gap-4 w-full">
+                                    <div className="summary text-gray-800 font-medium leading-relaxed markdown-table-content">
+                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content.summary || ''}</ReactMarkdown>
+                                    </div>
+                                    
+                                    {m.content.metrics && Object.keys(m.content.metrics).length > 0 && (
+                                      <div className="grid grid-cols-2 gap-3 mt-1">
+                                        {Object.entries(m.content.metrics).map(([k, v]) => (
+                                          <div key={k} className="bg-blue-50 border border-blue-100/50 p-3 rounded-xl shadow-sm">
+                                            <div className="text-[10px] text-blue-500 font-black uppercase tracking-widest mb-1">
+                                              {k.replace(/([A-Z])/g, ' $1').trim()}
+                                            </div>
+                                            <div className="text-xl font-black text-blue-900">{v}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {m.content.insights && m.content.insights.length > 0 && (
+                                      <div className="insights mt-2 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                        <div className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-3">Strategic Insights</div>
+                                        <div className="space-y-3">
+                                          {m.content.insights.map((insight, idx) => (
+                                            <div key={idx} className="flex gap-3 text-xs leading-relaxed text-gray-700">
+                                              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-1.5"></div>
+                                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{insight}</ReactMarkdown>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{String(m.content)}</ReactMarkdown>
+                                )
+                            ) : (
+                                <p className="leading-relaxed font-medium">{m.content}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {isControllerTyping && (
+                      <div className="flex items-start gap-3">
+                        <div className="p-3 bg-white border border-gray-100 rounded-2xl rounded-tl-none shadow-sm">
+                          <Loader2 size={16} className="text-blue-500 animate-spin" />
+                        </div>
+                      </div>
+                    )}
+                    <div ref={controllerChatEndRef} />
+                  </div>
+
+                  {/* Input Area */}
+                  <div className="p-6 bg-white border-t border-gray-100">
+                    <div className="relative flex items-center">
+                      <input 
+                        type="text"
+                        placeholder="Compare baseline vs update..."
+                        value={controllerQuery}
+                        onChange={(e) => setControllerQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleControllerAsk()}
+                        className="w-full pl-6 pr-14 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-gray-400 font-medium"
+                      />
+                      <button 
+                        onClick={handleControllerAsk}
+                        disabled={!controllerQuery || isControllerTyping}
+                        className="absolute right-2 p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95 disabled:opacity-20 disabled:scale-100 transition-all"
+                      >
+                        <Send size={18} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button 
+                onClick={() => setIsControllerChatOpen(!isControllerChatOpen)}
+                className={`w-16 h-16 rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 active:scale-90 group relative ${isControllerChatOpen ? 'bg-gray-900 text-white active:bg-gray-800' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-500/40'}`}
+              >
+                {isControllerChatOpen ? <X size={28} /> : <Zap size={28} className="group-hover:animate-pulse" />}
+                {!isControllerChatOpen && (
+                  <div className="absolute -top-12 right-0 bg-white px-4 py-2 rounded-xl border border-gray-100 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                    <span className="text-[10px] font-black text-gray-900 uppercase tracking-widest">Controller Assistant</span>
+                  </div>
+                )}
+              </button>
             </div>
           </div>
         ) : null}
