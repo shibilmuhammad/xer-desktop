@@ -138,7 +138,7 @@ class XERAnalyzer:
             
         messages.append({
             "role": "system", 
-            "content": "Return the final analysis STRICTLY as a JSON object. The 'summary' must be a professional executive summary with analytical depth (use Markdown for bolding/emphasis). If the user asked for a list, include the detailed list of activities in the summary using Markdown tables. The 'metrics' should be numerical KPIs. The 'insights' should be strategic findings. Schema: {\"summary\": \"...\", \"metrics\": {...}, \"insights\": [...], \"drivers\": [...]}"
+            "content": "Return the final analysis STRICTLY as a JSON object. The 'summary' must be a professional executive summary with analytical depth (use Markdown for bolding/emphasis). If the user asked for a list, include the detailed list of activities in the summary using Markdown tables. The 'metrics' should be numerical KPIs. The 'insights' should be strategic findings. Schema: {\"summary\": \"...\", \"metrics\": {...}, \"insights\": [...], \"recommendations\": [...]}"
         })
         
         final_response = self.client.chat.completions.create(
@@ -157,7 +157,7 @@ class XERAnalyzer:
         
         metrics = {}
         insights = []
-        drivers = []
+        recommendations = []
         
         for k, v in analysis_results.items():
             if isinstance(v, dict):
@@ -165,30 +165,32 @@ class XERAnalyzer:
                 insights.append(v.get('summary', ''))
                 issues = v.get('issues', [])
                 if issues: insights.extend(issues)
-                if k == 'delay_drivers':
-                    drivers.extend(v.get('issues', []))
+                recs = v.get('recommendations', [])
+                if recs: recommendations.extend(recs)
                     
         return {
             "summary": explanation,
             "metrics": metrics,
             "insights": insights,
-            "drivers": drivers
+            "recommendations": recommendations
         }
         
     def _fallback_deterministic(self, query: str, error: str) -> Dict[str, Any]:
         res = self._route_query(query)
         metrics = {}
         insights = []
-        for k, v in res.items():
+        recommendations = []
+        for v in res.values():
              if isinstance(v, dict):
                  metrics.update(v.get('metrics', {}))
                  insights.append(v.get('summary', ''))
                  if v.get('issues'): insights.extend(v['issues'])
+                 if v.get('recommendations'): recommendations.extend(v['recommendations'])
         return {
             "summary": f"LLM Integration Failed ({error}). Showing deterministic raw data fallback.",
             "metrics": metrics,
             "insights": insights,
-            "drivers": []
+            "recommendations": recommendations
         }
 
     # ------- DETERMINISTIC FUNCTIONS -------
@@ -393,7 +395,7 @@ class XERAnalyzer:
             "metrics": {"impactedDriversCount": len(drivers)},
             "data": drivers,
             "issues": [f"Activity {d['task_code']} is driving {d['delay_days']} days of slippage." for d in drivers],
-            "recommendations": ["Focus schedule recovery efforts on top driving activities."]
+            "recommendations": [f"Conduct recovery session for {d['task_code']} to recover {d['delay_days']} days." for d in drivers[:3]] + ["Re-baseline project to reflect current performance benchmarks."]
         }
         self._cache['delay_drivers'] = res
         return res

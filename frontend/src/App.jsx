@@ -858,16 +858,17 @@ function App() {
                                   </div>
                                 )}
 
-                                {m.content.drivers && m.content.drivers.length > 0 && (
-                                  <div className="drivers mt-1">
+                                {(m.content.recommendations || m.content.drivers) && (m.content.recommendations || m.content.drivers).length > 0 && (
+                                  <div className="recommendations mt-1">
                                     <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                      <TrendingDown size={12} className="text-red-400"/> Critical Impact Drivers
+                                      <Zap size={12} className="text-amber-500"/> Strategic Recommendations
                                     </h5>
-                                    <div className="flex flex-wrap gap-2">
-                                      {m.content.drivers.map((driver, idx) => (
-                                        <span key={idx} className="px-2.5 py-1 bg-red-50 text-red-700 border border-red-100 rounded text-xs font-mono font-bold shadow-sm">
-                                          {driver.length > 60 ? driver.substring(0, 60) + "..." : driver}
-                                        </span>
+                                    <div className="space-y-2">
+                                      {(m.content.recommendations || m.content.drivers).map((rec, idx) => (
+                                        <div key={idx} className="flex gap-2.5 px-3 py-2 bg-amber-50/50 text-amber-800 border border-amber-100/50 rounded-xl text-xs font-semibold shadow-sm leading-relaxed">
+                                          <div className="mt-1 shrink-0"><Zap size={10} className="text-amber-500" /></div>
+                                          {rec}
+                                        </div>
                                       ))}
                                     </div>
                                   </div>
@@ -1292,14 +1293,16 @@ function App() {
                                       </div>
                                     )}
 
-                                    {m.content.insights && m.content.insights.length > 0 && (
-                                      <div className="insights mt-2 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                        <div className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-3">Strategic Insights</div>
-                                        <div className="space-y-3">
-                                          {m.content.insights.map((insight, idx) => (
-                                            <div key={idx} className="flex gap-3 text-xs leading-relaxed text-gray-700">
-                                              <div className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0 mt-1.5"></div>
-                                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{insight}</ReactMarkdown>
+                                    {(m.content.recommendations || m.content.drivers) && (m.content.recommendations || m.content.drivers).length > 0 && (
+                                      <div className="recommendations mt-2">
+                                        <div className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                          <Zap size={12} className="text-amber-500"/> Strategic Recommendations
+                                        </div>
+                                        <div className="space-y-2 mt-2">
+                                          {(m.content.recommendations || m.content.drivers).map((rec, idx) => (
+                                            <div key={idx} className="flex gap-2.5 px-3 py-2.5 bg-amber-50/50 text-amber-800 border border-amber-100/50 rounded-xl text-xs font-semibold shadow-sm leading-relaxed">
+                                              <div className="mt-1 shrink-0"><Zap size={10} className="text-amber-500" /></div>
+                                              {rec}
                                             </div>
                                           ))}
                                         </div>

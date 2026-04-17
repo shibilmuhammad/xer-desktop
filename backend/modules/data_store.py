@@ -192,13 +192,21 @@ class XERDataStore:
         def calc_p6_delay(row):
             code = row.get('task_code')
             baseline_finish = baseline_map.get(code)
-            current_planned_finish = row.get('_dt_target_end_date')
             
-            if pd.isnull(baseline_finish) or pd.isnull(current_planned_finish):
+            # Use Actual Finish if available, otherwise use Projected/Planned Finish
+            current_finish = row.get('_dt_act_end_date')
+            if pd.isnull(current_finish):
+                current_finish = row.get('_dt_target_end_date')
+            
+            if pd.isnull(baseline_finish) or pd.isnull(current_finish):
                 return 0
             
             try:
-                diff = current_planned_finish - baseline_finish
+                # Direct comparison: If current finish is exactly the same or before baseline, delay is 0
+                if current_finish <= baseline_finish:
+                    return 0
+                
+                diff = current_finish - baseline_finish
                 return int(diff.days) if hasattr(diff, 'days') else 0
             except:
                 return 0
@@ -207,6 +215,10 @@ class XERDataStore:
 
         # 4. Delay-Float Matrix Logic
         def classify_matrix(row):
+            # Once a task is COMPLETED, its forensic 'Delayed' status is retired
+            if row['status_enum'] == 'COMPLETED':
+                return "NORMAL"
+                
             delay = row['delay_days']
             flt = row['float_hrs']
             if delay > 0:
@@ -655,9 +667,17 @@ class XERDataStore:
             
             def check_filter(tid):
                 m = metrics.get(tid, {})
+                status = m.get('status_enum')
+                
+                # Exclusion rule: COMPLETED tasks generally don't show in forensic path filters
+                if filter_type in ['CRITICAL', 'NEG_FLOAT'] and status == 'COMPLETED':
+                    return False
+                
                 if filter_type == 'CRITICAL': return m.get('is_critical_p6', False)
                 if filter_type == 'NEG_FLOAT': return (m.get('float_hrs', 0) < 0)
-                if filter_type == 'DELAYED': return (m.get('delay_days', 0) > 0)
+                if filter_type == 'DELAYED': 
+                    # For total 'Delayed' view, focus on active incomplete delays
+                    return (m.get('delay_days', 0) > 0) and status != 'COMPLETED'
                 if filter_type == 'DELAYED_CRITICAL': return m.get('delay_float_category') == 'DELAYED_CRITICAL'
                 if filter_type == 'DELAYED_NEGATIVE': return m.get('delay_float_category') == 'DELAYED_NEGATIVE'
                 return True
