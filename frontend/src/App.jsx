@@ -738,7 +738,7 @@ function App() {
                                   <span className={`text-[11px] font-black uppercase tracking-tighter ${point.status ? 'text-green-400' : 'text-red-400'}`}>
                                     {point.status ? 'Pass' : 'Fail'} if {point.threshold}
                                   </span>
-                                  <span className="ml-auto text-[10px] font-bold text-gray-600 bg-black/20 px-2 py-0.5 rounded border border-white/5">
+                                  <span className={`ml-auto text-[10px] font-bold bg-black/20 px-2 py-0.5 rounded border ${point.status ? 'text-green-400 border-green-500/20' : 'text-red-400 border-red-500/20'}`}>
                                     Actual: {typeof point.val === 'number' ? point.val.toFixed(1) + '%' : point.val}
                                   </span>
                                 </div>
