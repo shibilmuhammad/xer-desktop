@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 from typing import Dict, List, Optional, Any
 
 class XERDataStore:
@@ -196,8 +197,11 @@ class XERDataStore:
             if pd.isnull(baseline_finish) or pd.isnull(current_planned_finish):
                 return 0
             
-            delay = (current_planned_finish - baseline_finish).days
-            return delay
+            try:
+                diff = current_planned_finish - baseline_finish
+                return int(diff.days) if hasattr(diff, 'days') else 0
+            except:
+                return 0
 
         df['delay_days'] = df.apply(calc_p6_delay, axis=1)
 
@@ -273,43 +277,89 @@ class XERDataStore:
         hard_const_count = len(incomplete_tasks[incomplete_tasks['cstr_type'].isin(hard_constraints)])
         pt5_val = (hard_const_count / total_incomplete * 100) if total_incomplete > 0 else 0
         
-        # Check 6: High Float (> 44 days / 352 hrs)
-        high_float_count = len(incomplete_tasks[incomplete_tasks['float_hrs'] > 352])
+        # Check 6: High Float (> 44 days)
+        high_float_threshold = 44 * self.hours_per_day
+        high_float_count = len(incomplete_tasks[incomplete_tasks['float_hrs'] > high_float_threshold])
         pt6_val = (high_float_count / total_incomplete * 100) if total_incomplete > 0 else 0
         
         # Check 7: Negative Float
         neg_float_count = len(incomplete_tasks[incomplete_tasks['float_hrs'] < 0])
         pt7_val = (neg_float_count / total_incomplete * 100) if total_incomplete > 0 else 0
         
-        # Check 8: High Duration (> 44 days / 352 hrs)
-        df['orig_dur_hrs'] = pd.to_numeric(df['orig_dur_hr_cnt'], errors='coerce').fillna(0) if 'orig_dur_hr_cnt' in df.columns else 0
-        high_dur_count = len(incomplete_tasks[pd.to_numeric(incomplete_tasks['orig_dur_hr_cnt'], errors='coerce').fillna(0) > 352]) if 'orig_dur_hr_cnt' in incomplete_tasks.columns else 0
+        # Check 8: High Duration (> 44 days)
+        # We use target_drtn_hr_cnt as it represents Planned Duration in most XER exports
+        dur_col = 'target_drtn_hr_cnt' if 'target_drtn_hr_cnt' in df.columns else 'orig_dur_hr_cnt'
+        high_dur_threshold = 44 * self.hours_per_day
+        
+        if dur_col in incomplete_tasks.columns:
+            high_dur_count = len(incomplete_tasks[pd.to_numeric(incomplete_tasks[dur_col], errors='coerce').fillna(0) > high_dur_threshold])
+        else:
+            high_dur_count = 0
+            
         pt8_val = (high_dur_count / total_incomplete * 100) if total_incomplete > 0 else 0
 
-        # Check 11: Missed Tasks
+        # Check 11: Missed Tasks (% of completed tasks with late finish)
         missed_count = len(df[(df['status_enum'] == 'COMPLETED') & (df['delay_days'] > 0)])
         total_completed = len(df[df['status_enum'] == 'COMPLETED'])
         pt11_val = (missed_count / total_completed * 100) if total_completed > 0 else 0
 
-        # Check 13: CPLI
-        # CPLI = (CP Duration + Total Float) / CP Duration. Approx using project finish variance.
-        pt13_val = 1.0 - (finish_variance / 365) if finish_variance > 0 else 1.0
+        # Check 13: CPLI (Critical Path Length Index)
+        # Formula: (Remaining Working Days + Total Float) / Remaining Working Days
+        # Remaining Days = Data Date to Project Finish
+        # Robust Data Date lookup
+        data_date_val = source.get('stats', {}).get('data_date')
+        if not data_date_val or data_date_val == "N/A":
+            # Fallback to project info if stats not yet ready
+            proj_data = source.get('data', {}).get('project', [])
+            if isinstance(proj_data, list) and proj_data:
+                data_date_val = proj_data[0].get('last_recalc_date')
+            elif isinstance(proj_data, dict):
+                data_date_val = proj_data.get('last_recalc_date')
+        
+        project_work_days = 1 # Default to avoid division by zero
+        if data_date_val:
+            try:
+                # Convert to string and slice safely
+                ds = str(data_date_val)[:10]
+                data_date = pd.to_datetime(ds)
+                finish_date = df['_dt_target_end_date'].max()
+                if pd.notnull(finish_date) and pd.notnull(data_date):
+                    calendar_diff = finish_date - data_date
+                    if hasattr(calendar_diff, 'days'):
+                        # Convert calendar days to working days (Benchmark: 5/7 conversion)
+                        project_work_days = max(1, int(calendar_diff.days * 5 / 7))
+            except:
+                project_work_days = 1
+        
+        # Industrial CPLI uses the Total Float of the PROJECT FINISH milestone
+        # Rogue tasks with extreme float are excluded
+        finish_milestone = df[df['task_type'] == 'TT_FinMile']
+        if not finish_milestone.empty:
+            total_float_hrs = finish_milestone['float_hrs'].min()
+        else:
+            # Fallback: Minimum float of all tasks, but capped to avoid extreme outliers (orphans)
+            total_float_hrs = df['float_hrs'].min() if not df.empty else 0
+            # If the float is so negative it's more than the project duration, it's likely a data error/orphan
+            total_float_hrs = max(total_float_hrs, -(project_work_days * self.hours_per_day))
+
+        min_float_days = total_float_hrs / self.hours_per_day
+        pt13_val = round((project_work_days + min_float_days) / project_work_days, 3)
 
         assessment = [
-            {"id": 1, "name": "Logic", "measure": "% tasks missing links (dangling)", "val": pt1_val, "threshold": "<= 5%", "status": pt1_val <= 5},
-            {"id": 2, "name": "Leads", "measure": "% links with Negative Lag", "val": pt2_val, "threshold": "0%", "status": pt2_val == 0},
-            {"id": 3, "name": "Lags", "measure": "% links with Positive Lag", "val": pt3_val, "threshold": "<= 5%", "status": pt3_val <= 5},
-            {"id": 4, "name": "Rel Types", "measure": "% Finish-to-Start relationships", "val": pt4_val, "threshold": ">= 90%", "status": pt4_val >= 90},
-            {"id": 5, "name": "Hard Constraints", "measure": "% tasks with mandatory constraints", "val": pt5_val, "threshold": "<= 5%", "status": pt5_val <= 5},
-            {"id": 6, "name": "High Float", "measure": "% tasks with float > 44 days", "val": pt6_val, "threshold": "<= 5%", "status": pt6_val <= 5},
-            {"id": 7, "name": "Negative Float", "measure": "% tasks with negative float", "val": pt7_val, "threshold": "0%", "status": pt7_val == 0},
-            {"id": 8, "name": "High Duration", "measure": "% tasks with duration > 44 days", "val": pt8_val, "threshold": "<= 5%", "status": pt8_val <= 5},
-            {"id": 9, "name": "Invalid Dates", "measure": "Dates inconsistent with Data Date", "val": 0, "threshold": "0%", "status": True},
-            {"id": 10, "name": "Resources", "measure": "Tasks with assigned resources", "val": 100, "threshold": "100%", "status": True},
-            {"id": 11, "name": "Missed Tasks", "measure": "% completed tasks finished late", "val": pt11_val, "threshold": "<= 5%", "status": pt11_val <= 5},
-            {"id": 12, "name": "Critical Path", "measure": "Continuous path integrity", "val": 100, "threshold": "Required", "status": critical_count > 0},
-            {"id": 13, "name": "CPLI", "measure": "Critical Path Length Index", "val": pt13_val, "threshold": ">= 0.95", "status": pt13_val >= 0.95},
-            {"id": 14, "name": "Baseline", "measure": "Project baseline assignment", "val": 100, "threshold": "Required", "status": bool(baseline_map)}
+            {"id": 1, "name": "Logic", "measure": "% tasks missing links (dangling)", "val": float(pt1_val), "threshold": "<= 5%", "status": bool(pt1_val <= 5)},
+            {"id": 2, "name": "Leads", "measure": "% links with Negative Lag", "val": float(pt2_val), "threshold": "0%", "status": bool(pt2_val == 0)},
+            {"id": 3, "name": "Lags", "measure": "% links with Positive Lag", "val": float(pt3_val), "threshold": "<= 5%", "status": bool(pt3_val <= 5)},
+            {"id": 4, "name": "Rel Types", "measure": "% Finish-to-Start relationships", "val": float(pt4_val), "threshold": ">= 90%", "status": bool(pt4_val >= 90)},
+            {"id": 5, "name": "Hard Constraints", "measure": "% tasks with mandatory constraints", "val": float(pt5_val), "threshold": "<= 5%", "status": bool(pt5_val <= 5)},
+            {"id": 6, "name": "High Float", "measure": "% tasks with float > 44 days", "val": float(pt6_val), "threshold": "<= 5%", "status": bool(pt6_val <= 5)},
+            {"id": 7, "name": "Negative Float", "measure": "% tasks with negative float", "val": float(pt7_val), "threshold": "0%", "status": bool(pt7_val == 0)},
+            {"id": 8, "name": "High Duration", "measure": "% tasks with duration > 44 days", "val": float(pt8_val), "threshold": "<= 5%", "status": bool(pt8_val <= 5)},
+            {"id": 9, "name": "Invalid Dates", "measure": "Dates inconsistent with Data Date", "val": 0.0, "threshold": "0%", "status": True},
+            {"id": 10, "name": "Resources", "measure": "Tasks with assigned resources", "val": 100.0, "threshold": "100%", "status": True},
+            {"id": 11, "name": "Missed Tasks", "measure": "% completed tasks finished late", "val": float(pt11_val), "threshold": "<= 5%", "status": bool(pt11_val <= 5)},
+            {"id": 12, "name": "Critical Path", "measure": "Continuous path integrity", "val": 100.0, "threshold": "Required", "status": bool(critical_count > 0)},
+            {"id": 13, "name": "CPLI", "measure": "Critical Path Length Index", "val": float(pt13_val), "threshold": ">= 0.95", "status": bool(pt13_val >= 0.95)},
+            {"id": 14, "name": "Baseline", "measure": "Project baseline assignment", "val": 100.0, "threshold": "Required", "status": bool(baseline_map)}
         ]
 
         # 7. Quality Metrics Aggregate
@@ -464,35 +514,76 @@ class XERDataStore:
         }
 
     def get_wbs_summary(self, version_id: Optional[str] = None, target_level: int = 2) -> List[Dict]:
-        """Aggregates task data by WBS level to provide discipline-level summaries (TPM Optimized)"""
+        """Aggregates task data by Discipline (Activity Code) or WBS level (Heuristic Priority)"""
         source = self.get_version(version_id)
         if not source or 'df' not in source: return []
         
         tasks_df = source['df'].get('tasks')
         wbs_df = source['df'].get('projwbs')
+        tables = source.get('data', {}).get('tables', {})
         
-        if tasks_df is None or wbs_df is None or len(tasks_df) == 0: return []
+        if tasks_df is None or len(tasks_df) == 0: return []
         
-        # 1. Map WBS hierarchy levels
-        parent_map = wbs_df.set_index('wbs_id')['parent_wbs_id'].to_dict()
-        wbs_info = wbs_df.set_index('wbs_id')[['wbs_short_name', 'wbs_name']].to_dict('index')
+        # 1. Try grouping by Activity Code (The Gold Standard)
+        discipline_map = {}
+        grouping_mode = "WBS"
         
-        def get_parent_at_level(wbs_id, level):
-            path = []
-            curr = wbs_id
-            while curr in parent_map and pd.notnull(curr):
-                path.append(curr)
-                curr = parent_map[curr]
-            path.reverse() # Root to leaf
-            # Target level (1-indexed in users mind, 0 is root)
-            idx = min(level, len(path)-1)
-            return path[idx] if path else wbs_id
+        if 'TASKACTV' in tables and 'ACTVTYPE' in tables and 'ACTVVAL' in tables:
+            # Find the type_id for "Discipline"
+            types = pd.DataFrame(tables['ACTVTYPE'])
+            disc_types = types[types['actv_code_type_name'].str.contains('discipline|disc|dept|trade|responsibility', case=False, na=False)]
+            
+            if not disc_types.empty:
+                type_id = disc_types.iloc[0]['actv_code_type_id']
+                vals = pd.DataFrame(tables['ACTVVAL'])
+                map_df = pd.DataFrame(tables['TASKACTV'])
+                
+                # Filter specifically for our Discipline type
+                specific_map = map_df[map_df['actv_code_type_id'] == type_id]
+                specific_vals = vals[vals['actv_code_type_id'] == type_id]
+                
+                # Join to get names
+                merged_map = specific_map.merge(specific_vals, on='actv_code_id', how='left')
+                discipline_map = merged_map.set_index('task_id')['actv_code_name'].to_dict()
+                grouping_mode = f"Code:{disc_types.iloc[0]['actv_code_type_name']}"
 
-        # 2. Map each task to its target-level WBS parent
+        # 2. Cleanup & Processing
+        def clean_label(label):
+            if not label or not isinstance(label, str): return label
+            # Strip numeric prefixes like "4 ", "05. ", "1 - "
+            return re.sub(r'^[\d\.\-\s]+', '', label).strip()
+
         tasks_copy = tasks_df.copy()
-        tasks_copy['target_wbs_id'] = tasks_copy['wbs_id'].apply(lambda x: get_parent_at_level(x, target_level))
         
-        # 3. Get deterministic metrics
+        if discipline_map:
+            tasks_copy['group_key'] = tasks_copy['task_id'].map(discipline_map).fillna("Unassigned / Other")
+            tasks_copy['group_name'] = tasks_copy['group_key'].apply(clean_label)
+        else:
+            # Fallback to WBS
+            if wbs_df is not None:
+                parent_map = wbs_df.set_index('wbs_id')['parent_wbs_id'].to_dict()
+                wbs_info = wbs_df.set_index('wbs_id')[['wbs_short_name', 'wbs_name']].to_dict('index')
+                
+                def get_parent_at_level(wbs_id, level):
+                    path = []
+                    curr = wbs_id
+                    while curr in parent_map and pd.notnull(curr):
+                        path.append(curr)
+                        curr = parent_map[curr]
+                    path.reverse()
+                    idx = min(level, len(path)-1)
+                    return path[idx] if path else wbs_id
+
+                tasks_copy['target_wbs_id'] = tasks_copy['wbs_id'].apply(lambda x: get_parent_at_level(x, target_level))
+                tasks_copy['group_name'] = tasks_copy['target_wbs_id'].apply(lambda x: clean_label(wbs_info.get(x, {}).get('wbs_name', 'General')))
+            else:
+                tasks_copy['group_name'] = "General Project"
+
+        # 3. Handle Milestones (Separate from functional work)
+        is_mile = tasks_copy['task_type'].isin(['TT_Mile', 'TT_FinMile'])
+        tasks_copy.loc[is_mile, 'group_name'] = "Project Milestones"
+
+        # 4. Get deterministic metrics
         analysis = self.get_deterministic_analysis(version_id)
         activity_metrics = analysis.get('activityAnalysis', {})
         
@@ -505,12 +596,11 @@ class XERDataStore:
             })
         metrics_df = pd.DataFrame(metrics_list)
         
-        # Join
+        # 5. Join and Aggregate
         merged = tasks_copy.merge(metrics_df, on='task_id', how='left')
         merged['drtn'] = pd.to_numeric(merged['target_drtn_hr_cnt'], errors='coerce').fillna(0) / self.hours_per_day if 'target_drtn_hr_cnt' in merged.columns else 0
         
-        # 4. Aggregate by target_wbs_id
-        summary = merged.groupby('target_wbs_id').agg(
+        summary = merged.groupby('group_name').agg(
             total_tasks=('task_id', 'count'),
             duration_days=('drtn', 'sum'),
             avg_float_hrs=('float_hrs', 'mean'),
@@ -519,38 +609,19 @@ class XERDataStore:
             not_started=('status', lambda x: (x == 'NOT_STARTED').sum())
         ).reset_index()
         
-        # 5. Limit rows and aggregate "Others" if too large (OpenAI TPM optimization)
-        MAX_ROWS = 35
-        if len(summary) > MAX_ROWS:
-            summary = summary.sort_values('total_tasks', ascending=False)
-            top_parts = summary.head(MAX_ROWS).copy()
-            others_part = summary.iloc[MAX_ROWS:]
-            
-            others_row = {
-                'target_wbs_id': 'OTHERS_BUCKET',
-                'total_tasks': others_part['total_tasks'].sum(),
-                'duration_days': others_part['duration_days'].sum(),
-                'avg_float_hrs': others_part['avg_float_hrs'].mean(),
-                'completed': others_part['completed'].sum(),
-                'in_progress': others_part['in_progress'].sum(),
-                'not_started': others_part['not_started'].sum()
-            }
-            summary = pd.concat([top_parts, pd.DataFrame([others_row])], ignore_index=True)
-
+        # 6. Formatting
         results = []
         for _, row in summary.iterrows():
-            w_id = row['target_wbs_id']
-            name = "Remaining Disciplines (Aggregated)" if w_id == 'OTHERS_BUCKET' else wbs_info.get(w_id, {}).get('wbs_name', 'Unknown')
-            code = "..." if w_id == 'OTHERS_BUCKET' else wbs_info.get(w_id, {}).get('wbs_short_name', '')
-            
             results.append({
-                "discipline": f"{code} {name}".strip(),
+                "discipline": str(row['group_name']),
                 "activities": int(row['total_tasks']),
                 "duration_days": round(float(row['duration_days']), 0),
                 "avg_float": round(float(row['avg_float_hrs']), 1),
                 "status": f"{int(row['completed'])}C / {int(row['in_progress'])}IP / {int(row['not_started'])}NS"
             })
-        return results
+        
+        # Sort by impact (negative float)
+        return sorted(results, key=lambda x: x['avg_float'])
 
     def get_table_data(self, table_type: str = "TASK", search: str = "", limit: int = 100, offset: int = 0, source_id: Optional[str] = None, filter_type: str = "ALL") -> Dict:
         """Fetch and format paginated table data from a specific version ID"""

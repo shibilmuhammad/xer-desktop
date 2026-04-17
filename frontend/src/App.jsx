@@ -734,12 +734,16 @@ function App() {
                               <td className="px-8 py-5 text-xs font-black text-gray-300 font-mono tracking-tighter">{point.threshold}</td>
                               <td className="px-8 py-5">
                                 <div className="flex items-center gap-3">
-                                  <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_8px] ${point.status ? 'bg-green-500 shadow-green-500/40' : 'bg-red-500 shadow-red-500/40'}`}></div>
-                                  <span className={`text-[11px] font-black uppercase tracking-tighter ${point.status ? 'text-green-400' : 'text-red-400'}`}>
-                                    {point.status ? 'Pass' : 'Fail'} if {point.threshold}
+                                  <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px] shadow-green-500/40"></div>
+                                  <span className="text-[11px] font-black uppercase tracking-tighter text-green-400/80">
+                                    {(point.id === 12 || point.id === 14) ? 'Pass / Fail' : `Pass if ${point.threshold}`}
                                   </span>
                                   <span className={`ml-auto text-[10px] font-bold bg-black/20 px-2 py-0.5 rounded border ${point.status ? 'text-green-400 border-green-500/20' : 'text-red-400 border-red-500/20'}`}>
-                                    Actual: {typeof point.val === 'number' ? point.val.toFixed(1) + '%' : point.val}
+                                    Actual: {
+                                      point.id === 13 ? point.val.toFixed(3) : 
+                                      (point.id === 12 || point.id === 14 || point.id === 9 || point.id === 10) ? (point.status ? 'Pass' : 'Fail') :
+                                      typeof point.val === 'number' ? point.val.toFixed(1) + '%' : point.val
+                                    }
                                   </span>
                                 </div>
                               </td>

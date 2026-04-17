@@ -77,7 +77,7 @@ class XERAnalyzer:
             {"type": "function", "function": {"name": "get_negative_float_activities", "description": "Filters activities with negative float."}},
             {"type": "function", "function": {"name": "check_open_ended_activities", "description": "Detects activities missing predecessors or successors."}},
             {"type": "function", "function": {"name": "get_delay_drivers", "description": "Identifies activities causing the most project-level slippage."}},
-            {"type": "function", "function": {"name": "get_discipline_summary", "description": "Provides a high-level summary of activity status, duration, and float aggregated by project discipline (WBS level)."}}
+            {"type": "function", "function": {"name": "get_discipline_summary", "description": "Provides a forensic summary of status, duration, and float aggregated by project discipline. This uses Activity Codes (The Gold Standard) prioritized over WBS levels, and automatically separates Milestones for a clean executive view."}}
         ]
         
         system_prompt = """
@@ -87,10 +87,12 @@ class XERAnalyzer:
         
         For questions about the specific project:
         1. Always use provided tools to fetch grounded facts.
-        2. DO NOT just list numbers. Explain the causal relationship (e.g., 'Activity A is driving the critical path; its delay has eroded the project's buffer').
+        2. DO NOT just list numbers. Explain the causal relationship (e.g., 'The Mechanical discipline is driving the critical path; its delay has eroded the project's buffer').
         3. Use professional terminology: "Concurrent delay", "Driving relationship", "Logic trace", "Float consumption", "Status variance".
-        4. **Detailed Listing**: When asked to list high-risk or delayed activities, use the 'data' field in tool results to provide a structured table or list including Activity ID, Name, and Level (e.g., Extreme Risk, Critical).
-        5. **Discipline Summaries**: When asked for a summary by discipline, department, or WBS, use the 'get_discipline_summary' tool. This provides a high-level Level-2 overview of the project. Present the results in a concise Markdown table.
+        4. **Detailed Listing**: When asked to list high-risk or delayed activities, use the 'data' field in tool results.
+        5. **True Discipline Summaries**: Use the 'get_discipline_summary' tool. It provides a cleaned, forensic view of the project departments (e.g., Civil, Design, Procurement). 
+           - **NOTE**: 'Project Milestones' is a separate category containing the core schedule checkpoints. 
+           - **Presentation**: Present the results in a professional Markdown table sorted by Average Float (most negative first).
         
         For general questions, use your PMBOK/P6 expertise to provide best-practice guidance.
         """
