@@ -5,6 +5,91 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import logo from './assets/logo.png'
 
+const VersionManagerSection = ({ versions, selectedVersionId, setSelectedVersionId, handleDeleteVersion, handleUpload, loading }) => {
+  return (
+    <div className="mx-6 my-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Baseline Section */}
+      <div className="bg-white rounded-[1.5rem] border border-gray-200 p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4 px-1">
+          <span className="text-[11px] font-black text-gray-900 uppercase tracking-widest">Baseline Schedule</span>
+          {!versions.find(v => v.type === 'baseline') && (
+            <span className="text-[9px] font-bold text-orange-500 bg-orange-50 px-2.5 py-1 rounded-lg border border-orange-100 italic">Required</span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-3">
+          {versions.filter(v => v.type === 'baseline').length > 0 ? (
+            versions.filter(v => v.type === 'baseline').map((v) => (
+              <div 
+                key={v.id} 
+                onClick={() => { setSelectedVersionId(v.id); }}
+                className={`p-4 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-100 hover:border-blue-200'}`}
+              >
+                <button 
+                  onClick={(e) => handleDeleteVersion(e, v.id)}
+                  className={`absolute top-3 right-3 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
+                >
+                  <Trash2 size={14} />
+                </button>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white animate-pulse' : 'bg-blue-600'}`}></div>
+                  <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
+                </div>
+                <div className={`text-xs font-black truncate pr-8 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
+                  {v.name}
+                </div>
+              </div>
+            ))
+          ) : (
+            <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-blue-100 rounded-2xl cursor-pointer hover:bg-blue-50/50 transition-all bg-blue-50/20 group">
+              <Upload size={24} className="text-blue-400 mb-2 group-hover:scale-110 transition-transform" />
+              <p className="text-[11px] font-black text-blue-700 uppercase tracking-tighter">Upload Master Baseline</p>
+              <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'baseline')} disabled={loading} />
+            </label>
+          )}
+        </div>
+      </div>
+
+      {/* Monthly Updates Section */}
+      <div className="bg-white rounded-[1.5rem] border border-gray-200 p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4 px-1">
+          <span className="text-[11px] font-black text-gray-950 uppercase tracking-widest">Monthly Updates</span>
+          <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2.5 py-1 rounded-lg border border-gray-200/50">{versions.filter(v => v.type === 'update').length}</span>
+        </div>
+        <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
+          {versions.filter(v => v.type === 'update').map((v) => (
+            <div 
+              key={v.id} 
+              onClick={() => { setSelectedVersionId(v.id); }}
+              className={`flex-shrink-0 w-56 p-4 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-100 hover:border-blue-200'}`}
+            >
+              <button 
+                onClick={(e) => handleDeleteVersion(e, v.id)}
+                className={`absolute top-3 right-3 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
+              >
+                <Trash2 size={14} />
+              </button>
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white' : 'bg-green-500'}`}></div>
+                <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
+              </div>
+              <div className={`text-xs font-black truncate pr-8 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
+                {v.name}
+              </div>
+            </div>
+          ))}
+          <label className="flex-shrink-0 w-48 flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-100 rounded-2xl cursor-pointer hover:bg-gray-50 transition-all group">
+            <div className="flex flex-col items-center gap-2">
+              <Upload size={20} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
+              <span className="text-[10px] font-black text-gray-500 uppercase group-hover:text-blue-700 transition-colors text-center">Add Monthly Update</span>
+            </div>
+            <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'update')} disabled={loading} />
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [authError, setAuthError] = useState(null)
@@ -458,114 +543,39 @@ function App() {
     <div className="flex h-screen w-screen bg-gray-50 overflow-hidden font-sans text-gray-950">
       {/* Sidebar */}
       <div className="w-[300px] bg-[#f8f9fa] border-r border-gray-200 p-6 flex flex-col overflow-y-auto">
-        <div className="mb-10">
+        <div className="mb-8">
           <img src={logo} alt="EllisDon Logo" className="h-8 object-contain" />
         </div>
-        
-        <h3 className="text-sm font-black text-gray-400 uppercase tracking-widest mb-6 flex items-center gap-2">
-          <BarChart2 size={16} className="text-blue-500" />
-          Project Repository
-        </h3>
-        
-        <div className="flex-1 overflow-y-auto pr-1 space-y-8">
-          {/* Baseline Section */}
-          <section>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[11px] font-black text-gray-900 uppercase tracking-wider">Baseline Schedule</span>
-              {!versions.find(v => v.type === 'baseline') && (
-                <span className="text-[9px] font-bold text-orange-500 bg-orange-50 px-2 py-0.5 rounded border border-orange-100 italic">Required</span>
-              )}
-            </div>
-            
-            {versions.filter(v => v.type === 'baseline').length > 0 ? (
-              versions.filter(v => v.type === 'baseline').map((v) => (
-                <div 
-                  key={v.id} 
-                  onClick={() => { setSelectedVersionId(v.id); }}
-                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 shadow-blue-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}
-                >
-                  <button 
-                    onClick={(e) => handleDeleteVersion(e, v.id)}
-                    className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100 shadow-sm'}`}
-                    title="Delete baseline"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white animate-pulse' : 'bg-blue-600'}`}></div>
-                    <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
-                  </div>
-                  <div className={`text-xs font-black truncate leading-tight pr-6 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
-                    {v.name}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <label className="flex flex-col items-center justify-center p-5 border-2 border-dashed border-blue-100 rounded-2xl cursor-pointer hover:bg-blue-50/50 transition-all bg-blue-50/20 group">
-                <Upload size={20} className="text-blue-400 mb-2 group-hover:scale-110 transition-transform" />
-                <p className="text-[10px] font-black text-blue-700 uppercase tracking-tighter">Upload Master Baseline</p>
-                <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'baseline')} disabled={loading} />
-              </label>
-            )}
-          </section>
 
-          {/* Monthly Updates Section */}
-          <section>
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[11px] font-black text-gray-950 uppercase tracking-wider font-sans">Monthly Updates</span>
-              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-md">{versions.filter(v => v.type === 'update').length}</span>
-            </div>
-            
-            <div className="space-y-3">
-              {versions.filter(v => v.type === 'update').map((v) => (
-                <div 
-                  key={v.id} 
-                  onClick={() => { setSelectedVersionId(v.id); }}
-                  className={`p-3.5 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 shadow-blue-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}
-                >
-                  <button 
-                    onClick={(e) => handleDeleteVersion(e, v.id)}
-                    className={`absolute top-2.5 right-2.5 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100 shadow-sm'}`}
-                    title="Delete update"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white' : 'bg-green-500'}`}></div>
-                    <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
-                  </div>
-                  <div className={`text-xs font-black truncate leading-tight pr-8 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
-                    {v.name}
-                  </div>
-                </div>
-              ))}
-
-              <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-100 rounded-2xl cursor-pointer hover:bg-gray-50 transition-all group">
-                <div className="flex items-center gap-2">
-                  <Upload size={16} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
-                  <span className="text-[10px] font-black text-gray-500 uppercase group-hover:text-blue-700 transition-colors">Add Monthly Update</span>
-                </div>
-                <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'update')} disabled={loading} />
-              </label>
-            </div>
-          </section>
-        </div>
-
-        <hr className="my-6 border-gray-200" />
-
-        <div className="space-y-2 mt-auto">
+        <div className="space-y-2 mb-8">
           <button 
             onClick={() => setViewMode('audit')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'audit' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'audit' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-gray-600 hover:bg-gray-100'}`}
           >
             <Activity size={18} /> Project Audit
           </button>
           <button 
             onClick={() => setViewMode('controller')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'controller' ? 'bg-blue-600 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${viewMode === 'controller' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-gray-600 hover:bg-gray-100'}`}
           >
             <TableIcon size={18} /> Project Controller
           </button>
+        </div>
+        
+        <div className="flex-1">
+          {/* Version management removed from sidebar */}
+        </div>
+
+        <div className="mt-auto pt-6 border-t border-gray-200">
+          <div className="flex items-center gap-3 px-2">
+            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-xs uppercase shadow-sm">
+              {userName.substring(0, 2)}
+            </div>
+            <div className="flex flex-col">
+              <span className="text-xs font-bold text-gray-900 truncate w-32">{userName}</span>
+              <span className="text-[10px] font-medium text-gray-400 uppercase tracking-tight">Standard User</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -582,6 +592,15 @@ function App() {
 
         {viewMode === 'audit' ? (
           <div className="flex-1 overflow-y-auto bg-gray-50/50 relative pb-48">
+            <VersionManagerSection 
+              versions={versions}
+              selectedVersionId={selectedVersionId}
+              setSelectedVersionId={setSelectedVersionId}
+              handleDeleteVersion={handleDeleteVersion}
+              handleUpload={handleUpload}
+              loading={loading}
+            />
+
             {/* The Persistent Project Audit Dashboard */}
             <div className="mx-6 my-6 bg-gray-900 rounded-[2.5rem] shadow-2xl relative overflow-hidden flex flex-col border border-white/10 max-h-[500px]">
               <div className="absolute top-0 right-0 p-8 opacity-[0.03] pointer-events-none">
@@ -719,10 +738,11 @@ function App() {
                         <thead>
                           <tr className="bg-white/5">
                             <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">#</th>
-                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Check Name</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Parameters</th>
                             <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">What is Measured</th>
-                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Threshold</th>
-                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Scoring Rule</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Accepted Threshold</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Score</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5 text-center">Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
@@ -733,17 +753,18 @@ function App() {
                               <td className="px-8 py-5 text-[11px] text-gray-400 font-medium leading-relaxed max-w-xs">{point.measure}</td>
                               <td className="px-8 py-5 text-xs font-black text-gray-300 font-mono tracking-tighter">{point.threshold}</td>
                               <td className="px-8 py-5">
-                                <div className="flex items-center gap-3">
-                                  <div className="w-2.5 h-2.5 rounded-full bg-green-500 shadow-[0_0_8px] shadow-green-500/40"></div>
-                                  <span className="text-[11px] font-black uppercase tracking-tighter text-green-400/80">
-                                    {(point.id === 12 || point.id === 14) ? 'Pass / Fail' : `Pass if ${point.threshold}`}
-                                  </span>
-                                  <span className={`ml-auto text-[10px] font-bold bg-black/20 px-2 py-0.5 rounded border ${point.status ? 'text-green-400 border-green-500/20' : 'text-red-400 border-red-500/20'}`}>
-                                    Actual: {
-                                      point.id === 13 ? point.val.toFixed(3) : 
-                                      (point.id === 12 || point.id === 14 || point.id === 9 || point.id === 10) ? (point.status ? 'Pass' : 'Fail') :
-                                      typeof point.val === 'number' ? point.val.toFixed(1) + '%' : point.val
-                                    }
+                                <span className="text-[12px] font-black text-white bg-white/5 px-3 py-1 rounded-lg border border-white/10">
+                                  {
+                                    point.id === 13 ? point.val.toFixed(3) : 
+                                    (point.id === 12 || point.id === 14 || point.id === 9 || point.id === 10) ? (point.status ? 'Pass' : 'Fail') :
+                                    typeof point.val === 'number' ? point.val.toFixed(1) + '%' : point.val
+                                  }
+                                </span>
+                              </td>
+                              <td className="px-8 py-5">
+                                <div className="flex justify-center">
+                                  <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm border ${point.status ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
+                                     {point.status ? 'Pass' : 'Fail'}
                                   </span>
                                 </div>
                               </td>
@@ -929,6 +950,17 @@ function App() {
          </div>
         ) : viewMode === 'controller' ? (
           <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50">
+            <div className="overflow-y-auto shrink-0">
+              <VersionManagerSection 
+                versions={versions}
+                selectedVersionId={selectedVersionId}
+                setSelectedVersionId={setSelectedVersionId}
+                handleDeleteVersion={handleDeleteVersion}
+                handleUpload={handleUpload}
+                loading={loading}
+              />
+            </div>
+
             {/* P6 Style Toolbar */}
             <div className="px-8 py-5 border-b border-gray-200 bg-white flex flex-col gap-4">
               <div className="flex flex-col md:flex-row gap-6 items-center justify-between">
