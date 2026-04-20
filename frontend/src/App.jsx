@@ -5,44 +5,95 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import logo from './assets/logo.png'
 
-const VersionManagerSection = ({ versions, selectedVersionId, setSelectedVersionId, handleDeleteVersion, handleUpload, loading }) => {
-  return (
-    <div className="mx-6 my-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-      {/* Baseline Section */}
-      <div className="bg-white rounded-[1.5rem] border border-gray-200 p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4 px-1">
-          <span className="text-[11px] font-black text-gray-900 uppercase tracking-widest">Baseline Schedule</span>
-          {!versions.find(v => v.type === 'baseline') && (
-            <span className="text-[9px] font-bold text-orange-500 bg-orange-50 px-2.5 py-1 rounded-lg border border-orange-100 italic">Required</span>
+const VersionManagerSection = ({ versions, selectedVersionId, setSelectedVersionId, handleDeleteVersion, handleUpload, loading, mode = 'full' }) => {
+  if (mode === 'toolbar' || mode === 'compact_row') {
+    return (
+      <div className={`flex items-center gap-4 py-1 ${mode === 'compact_row' ? 'bg-white rounded-2xl border border-gray-200 px-6 py-3 shadow-sm mx-6 my-4' : ''}`}>
+        {/* Compact Baseline */}
+        <div className="flex items-center gap-2 border-r border-gray-200 pr-4">
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Baseline:</span>
+          {versions.filter(v => v.type === 'baseline').length > 0 ? (
+            versions.filter(v => v.type === 'baseline').map((v) => (
+              <div 
+                key={v.id} 
+                onClick={() => setSelectedVersionId(v.id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-700 hover:border-blue-300'}`}
+              >
+                <span className="text-[10px] font-bold truncate max-w-[80px]">{v.name}</span>
+                <button onClick={(e) => handleDeleteVersion(e, v.id)} className="hover:text-red-400"><Trash2 size={12} /></button>
+              </div>
+            ))
+          ) : (
+            <label className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-blue-200 rounded-lg text-blue-600 cursor-pointer hover:bg-blue-50 transition-all">
+              <Upload size={12} /> <span className="text-[10px] font-black uppercase">Upload</span>
+              <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'baseline')} disabled={loading} />
+            </label>
           )}
         </div>
-        <div className="grid grid-cols-1 gap-3">
+
+        {/* Compact Updates */}
+        <div className="flex items-center gap-3 overflow-x-auto max-w-[400px] no-scrollbar">
+          <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest shrink-0">Updates:</span>
+          <div className="flex gap-2">
+            {versions.filter(v => v.type === 'update').map((v) => (
+              <div 
+                key={v.id} 
+                onClick={() => setSelectedVersionId(v.id)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border cursor-pointer transition-all shrink-0 ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 text-gray-700 hover:border-blue-300'}`}
+              >
+                <span className="text-[10px] font-bold">{v.data_date}</span>
+                <button onClick={(e) => handleDeleteVersion(e, v.id)} className="hover:text-red-400"><Trash2 size={12} /></button>
+              </div>
+            ))}
+            <label className="flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-gray-200 rounded-lg text-gray-400 cursor-pointer hover:bg-gray-50 transition-all shrink-0">
+              <Upload size={12} />
+              <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'update')} disabled={loading} />
+            </label>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const isCompact = mode === 'compact';
+  
+  return (
+    <div className={`mx-6 my-4 grid grid-cols-1 md:grid-cols-2 gap-4 ${isCompact ? 'max-w-4xl mx-auto' : ''}`}>
+      {/* Baseline Section */}
+      <div className={`bg-white rounded-[1.5rem] border border-gray-200 shadow-sm ${isCompact ? 'p-3' : 'p-5'}`}>
+        <div className={`flex items-center justify-between px-1 ${isCompact ? 'mb-2' : 'mb-4'}`}>
+          <span className={`${isCompact ? 'text-[9px]' : 'text-[11px]'} font-black text-gray-900 uppercase tracking-widest`}>Baseline Schedule</span>
+          {!versions.find(v => v.type === 'baseline') && (
+            <span className="text-[9px] font-bold text-orange-500 bg-orange-50 px-2 rounded-lg border border-orange-100 italic">Req</span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-2">
           {versions.filter(v => v.type === 'baseline').length > 0 ? (
             versions.filter(v => v.type === 'baseline').map((v) => (
               <div 
                 key={v.id} 
                 onClick={() => { setSelectedVersionId(v.id); }}
-                className={`p-4 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-100 hover:border-blue-200'}`}
+                className={`${isCompact ? 'p-2' : 'p-4'} rounded-xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-100 hover:border-blue-200'}`}
               >
                 <button 
                   onClick={(e) => handleDeleteVersion(e, v.id)}
-                  className={`absolute top-3 right-3 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
+                  className={`absolute top-2 right-2 p-1 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
                 >
-                  <Trash2 size={14} />
+                  <Trash2 size={12} />
                 </button>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white animate-pulse' : 'bg-blue-600'}`}></div>
-                  <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className={`w-1 h-1 rounded-full ${selectedVersionId === v.id ? 'bg-white animate-pulse' : 'bg-blue-600'}`}></div>
+                  <span className={`text-[9px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
                 </div>
-                <div className={`text-xs font-black truncate pr-8 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
+                <div className={`text-[10px] font-black truncate pr-6 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
                   {v.name}
                 </div>
               </div>
             ))
           ) : (
-            <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-blue-100 rounded-2xl cursor-pointer hover:bg-blue-50/50 transition-all bg-blue-50/20 group">
-              <Upload size={24} className="text-blue-400 mb-2 group-hover:scale-110 transition-transform" />
-              <p className="text-[11px] font-black text-blue-700 uppercase tracking-tighter">Upload Master Baseline</p>
+            <label className={`flex flex-col items-center justify-center ${isCompact ? 'p-4' : 'p-8'} border-2 border-dashed border-blue-100 rounded-xl cursor-pointer hover:bg-blue-50/50 transition-all bg-blue-50/20 group`}>
+              <Upload size={isCompact ? 18 : 24} className="text-blue-400 mb-1 group-hover:scale-110 transition-transform" />
+              <p className="text-[10px] font-black text-blue-700 uppercase tracking-tighter">Upload Baseline</p>
               <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'baseline')} disabled={loading} />
             </label>
           )}
@@ -50,38 +101,36 @@ const VersionManagerSection = ({ versions, selectedVersionId, setSelectedVersion
       </div>
 
       {/* Monthly Updates Section */}
-      <div className="bg-white rounded-[1.5rem] border border-gray-200 p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4 px-1">
-          <span className="text-[11px] font-black text-gray-950 uppercase tracking-widest">Monthly Updates</span>
-          <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2.5 py-1 rounded-lg border border-gray-200/50">{versions.filter(v => v.type === 'update').length}</span>
+      <div className={`bg-white rounded-[1.5rem] border border-gray-200 shadow-sm ${isCompact ? 'p-3' : 'p-5'}`}>
+        <div className={`flex items-center justify-between px-1 ${isCompact ? 'mb-2' : 'mb-4'}`}>
+          <span className={`${isCompact ? 'text-[9px]' : 'text-[11px]'} font-black text-gray-950 uppercase tracking-widest`}>Updates</span>
+          <span className="text-[9px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded-lg border border-gray-200/50">{versions.filter(v => v.type === 'update').length}</span>
         </div>
-        <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
+        <div className="flex gap-3 overflow-x-auto pb-2 no-scrollbar">
           {versions.filter(v => v.type === 'update').map((v) => (
             <div 
               key={v.id} 
               onClick={() => { setSelectedVersionId(v.id); }}
-              className={`flex-shrink-0 w-56 p-4 rounded-2xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-100 hover:border-blue-200'}`}
+              className={`flex-shrink-0 ${isCompact ? 'w-32 p-2' : 'w-56 p-4'} rounded-xl border cursor-pointer transition-all relative group shadow-sm ${selectedVersionId === v.id ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-100 hover:border-blue-200'}`}
             >
               <button 
                 onClick={(e) => handleDeleteVersion(e, v.id)}
-                className={`absolute top-3 right-3 p-1.5 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
+                className={`absolute top-2 right-2 p-1 rounded-lg transition-all z-10 ${selectedVersionId === v.id ? 'bg-white/20 text-white hover:bg-red-500' : 'bg-gray-50 text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-100'}`}
               >
-                <Trash2 size={14} />
+                <Trash2 size={12} />
               </button>
-              <div className="flex items-center gap-2 mb-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${selectedVersionId === v.id ? 'bg-white' : 'bg-green-500'}`}></div>
-                <span className={`text-[10px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
+              <div className="flex items-center gap-2 mb-1">
+                <div className={`w-1 h-1 rounded-full ${selectedVersionId === v.id ? 'bg-white' : 'bg-green-500'}`}></div>
+                <span className={`text-[9px] font-bold font-mono ${selectedVersionId === v.id ? 'text-blue-100' : 'text-gray-400'}`}>{v.data_date}</span>
               </div>
-              <div className={`text-xs font-black truncate pr-8 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
+              <div className={`text-[10px] font-black truncate pr-6 ${selectedVersionId === v.id ? 'text-white' : 'text-gray-900'}`}>
                 {v.name}
               </div>
             </div>
           ))}
-          <label className="flex-shrink-0 w-48 flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-100 rounded-2xl cursor-pointer hover:bg-gray-50 transition-all group">
-            <div className="flex flex-col items-center gap-2">
-              <Upload size={20} className="text-gray-400 group-hover:text-blue-500 transition-colors" />
-              <span className="text-[10px] font-black text-gray-500 uppercase group-hover:text-blue-700 transition-colors text-center">Add Monthly Update</span>
-            </div>
+          <label className={`flex-shrink-0 ${isCompact ? 'w-24' : 'w-48'} flex flex-col items-center justify-center p-2 border-2 border-dashed border-gray-100 rounded-xl cursor-pointer hover:bg-gray-50 transition-all group`}>
+            <Upload size={isCompact ? 16 : 20} className="text-gray-400 group-hover:text-blue-500 transition-colors mb-1" />
+            <span className="text-[9px] font-black text-gray-500 uppercase group-hover:text-blue-700 transition-colors text-center leading-tight">Add Update</span>
             <input type="file" hidden accept=".xer" onChange={(e) => handleUpload(e, 'update')} disabled={loading} />
           </label>
         </div>
@@ -599,6 +648,7 @@ function App() {
               handleDeleteVersion={handleDeleteVersion}
               handleUpload={handleUpload}
               loading={loading}
+              mode="compact_row"
             />
 
             {/* The Persistent Project Audit Dashboard */}
@@ -740,18 +790,18 @@ function App() {
                             <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">#</th>
                             <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Parameters</th>
                             <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">What is Measured</th>
-                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Accepted Threshold</th>
+                            <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5 text-center">Accepted Threshold</th>
                             <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5">Score</th>
                             <th className="px-8 py-5 text-[10px] font-black text-gray-500 uppercase tracking-widest border-b border-white/5 text-center">Status</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5">
-                          {stats.delay_matrix.assessment.map((point) => (
+                          {stats.delay_matrix.assessment.filter(p => p.id !== 14).map((point) => (
                             <tr key={point.id} className="hover:bg-white/[0.02] transition-colors group">
                               <td className="px-8 py-5 text-sm font-black text-blue-500/70">{point.id}</td>
                               <td className="px-8 py-5 text-sm font-bold text-gray-100 group-hover:text-white transition-colors">{point.name}</td>
                               <td className="px-8 py-5 text-[11px] text-gray-400 font-medium leading-relaxed max-w-xs">{point.measure}</td>
-                              <td className="px-8 py-5 text-xs font-black text-gray-300 font-mono tracking-tighter">{point.threshold}</td>
+                              <td className="px-8 py-5 text-xs font-black text-gray-300 font-mono tracking-tighter text-center">{point.threshold}</td>
                               <td className="px-8 py-5">
                                 <span className="text-[12px] font-black text-white bg-white/5 px-3 py-1 rounded-lg border border-white/10">
                                   {
@@ -950,21 +1000,10 @@ function App() {
          </div>
         ) : viewMode === 'controller' ? (
           <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50">
-            <div className="overflow-y-auto shrink-0">
-              <VersionManagerSection 
-                versions={versions}
-                selectedVersionId={selectedVersionId}
-                setSelectedVersionId={setSelectedVersionId}
-                handleDeleteVersion={handleDeleteVersion}
-                handleUpload={handleUpload}
-                loading={loading}
-              />
-            </div>
-
             {/* P6 Style Toolbar */}
-            <div className="px-8 py-5 border-b border-gray-200 bg-white flex flex-col gap-4">
-              <div className="flex flex-col md:flex-row gap-6 items-center justify-between">
-                <div className="flex gap-1.5 p-1 bg-gray-100/80 rounded-xl overflow-x-auto max-w-full">
+            <div className="px-8 py-4 border-b border-gray-200 bg-white flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-6">
+                <div className="flex gap-1.5 p-1 bg-gray-100/80 rounded-xl overflow-x-auto shrink-0">
                   {[
                     { id: 'TASK', label: 'Activities', icon: <Activity size={14} /> },
                     { id: 'WBS', label: 'WBS', icon: <ListTree size={14} /> },
@@ -974,54 +1013,35 @@ function App() {
                     <button 
                       key={t.id}
                       onClick={() => { setViewerTable(t.id); setTablePage(1); }}
-                      className={`px-4 py-2.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 ${viewerTable === t.id ? 'bg-white text-blue-700 shadow-sm border border-gray-200/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/50'}`}
+                      className={`px-4 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-2 ${viewerTable === t.id ? 'bg-white text-blue-700 shadow-sm border border-gray-200/50' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-200/50'}`}
                     >
                       {t.icon} {t.label}
                     </button>
                   ))}
                 </div>
 
-                <div className="flex flex-1 gap-4 w-full md:w-auto justify-end items-center">
-                  {/* Version Selector Dropdown */}
-                  <div className="relative group shrink-0">
-                     <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 cursor-pointer hover:bg-white transition-all">
-                       <span className="text-[10px] text-gray-400 uppercase">Viewing:</span>
-                       <select 
-                          value={selectedVersionId}
-                          onChange={(e) => { setSelectedVersionId(e.target.value); setTablePage(1); }}
-                          className="bg-transparent border-none outline-none cursor-pointer text-gray-900 pr-2"
-                       >
-                          {versions.map(v => (
-                             <option key={v.id} value={v.id}>
-                                {v.type === 'baseline' ? 'Baseline' : `Update (${v.data_date})`}
-                             </option>
-                          ))}
-                       </select>
-                     </div>
-                  </div>
-
-                  <div className="relative flex-1 min-w-[200px] md:max-w-xs ml-2">
-                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input 
-                      type="text"
-                      placeholder="Search by name or ID..."
-                      value={tableSearch}
-                      onChange={(e) => { setTableSearch(e.target.value); setTablePage(1); }}
-                      className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500/20 outline-none transition-all focus:bg-white"
-                    />
-                  </div>
+                <div className="flex shrink-0">
+                   <VersionManagerSection 
+                      versions={versions}
+                      selectedVersionId={selectedVersionId}
+                      setSelectedVersionId={setSelectedVersionId}
+                      handleDeleteVersion={handleDeleteVersion}
+                      handleUpload={handleUpload}
+                      loading={loading}
+                      mode="toolbar"
+                   />
                 </div>
               </div>
               
-              {viewerTable === 'TASK' && (
-                <div className="flex flex-wrap gap-2 pt-2 pb-1">
-                  {[
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex flex-wrap gap-1.5">
+                  {viewerTable === 'TASK' && [
                     { id: 'ALL', label: 'All', color: 'border-gray-200 text-gray-600' },
-                    { id: 'CRITICAL', label: 'Critical (≤0)', color: 'border-red-200 text-red-600 bg-red-50/30' },
-                    { id: 'NEG_FLOAT', label: 'Neg Float', color: 'border-red-400 text-red-800 bg-red-100/50' },
-                    { id: 'DELAYED', label: 'Delayed', color: 'border-orange-200 text-orange-700 bg-orange-50/50' },
-                    { id: 'DELAYED_CRITICAL', label: 'Delay+Crit', color: 'border-red-600 text-red-900 bg-red-100' },
-                    { id: 'DELAYED_NEGATIVE', label: 'Delay+Neg', color: 'border-red-800 text-white bg-red-900' }
+                    { id: 'CRITICAL', label: 'Crit', color: 'border-red-200 text-red-600 bg-red-50/30' },
+                    { id: 'NEG_FLOAT', label: 'Neg', color: 'border-red-400 text-red-800 bg-red-100/50' },
+                    { id: 'DELAYED', label: 'Del', color: 'border-orange-200 text-orange-700 bg-orange-50/50' },
+                    { id: 'DELAYED_CRITICAL', label: 'D+C', color: 'border-red-600 text-red-900 bg-red-100' },
+                    { id: 'DELAYED_NEGATIVE', label: 'D+N', color: 'border-red-800 text-white bg-red-900' }
                   ].map(f => (
                     <button 
                       key={f.id}
@@ -1032,7 +1052,36 @@ function App() {
                     </button>
                   ))}
                 </div>
-              )}
+
+                <div className="flex items-center gap-3 ml-auto">
+                   {/* Compact Version Selection Selector */}
+                   <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-[10px] font-black text-gray-600">
+                     <span className="text-gray-400">VIEW:</span>
+                     <select 
+                        value={selectedVersionId}
+                        onChange={(e) => { setSelectedVersionId(e.target.value); setTablePage(1); }}
+                        className="bg-transparent border-none outline-none cursor-pointer text-gray-900 pr-1 text-[10px] font-black"
+                     >
+                        {versions.map(v => (
+                           <option key={v.id} value={v.id}>
+                              {v.type === 'baseline' ? 'Baseline' : `Update (${v.data_date})`}
+                           </option>
+                        ))}
+                     </select>
+                   </div>
+
+                   <div className="relative w-64">
+                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                     <input 
+                       type="text"
+                       placeholder="Search..."
+                       value={tableSearch}
+                       onChange={(e) => { setTableSearch(e.target.value); setTablePage(1); }}
+                       className="w-full pl-9 pr-4 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-[10px] font-medium focus:ring-2 focus:ring-blue-500/10 outline-none transition-all focus:bg-white"
+                     />
+                   </div>
+                </div>
+              </div>
             </div>
 
             {/* P6 Legend & Health Dashboard */}
