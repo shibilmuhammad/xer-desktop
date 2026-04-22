@@ -77,7 +77,24 @@ class XERAnalyzer:
             {"type": "function", "function": {"name": "get_negative_float_activities", "description": "Filters activities with negative float."}},
             {"type": "function", "function": {"name": "check_open_ended_activities", "description": "Detects activities missing predecessors or successors."}},
             {"type": "function", "function": {"name": "get_delay_drivers", "description": "Identifies activities causing the most project-level slippage."}},
-            {"type": "function", "function": {"name": "get_discipline_summary", "description": "Provides a forensic summary of status, duration, and float aggregated by project discipline. This uses Activity Codes (The Gold Standard) prioritized over WBS levels, and automatically separates Milestones for a clean executive view."}}
+            {"type": "function", "function": {"name": "get_discipline_summary", "description": "Provides a forensic summary of status, duration, and float aggregated by project discipline. This uses Activity Codes (The Gold Standard) prioritized over WBS levels, and automatically separates Milestones for a clean executive view."}},
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_activities",
+                    "description": "Searches the schedule database for specific activities by exact or partial name, code, or description. Use this tool specifically when the user asks for details (like start/finish dates, status) of a specific activity by name.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "search_term": {
+                                "type": "string",
+                                "description": "The exact or partial name/code of the activity to search for."
+                            }
+                        },
+                        "required": ["search_term"]
+                    }
+                }
+            }
         ]
         
         system_prompt = """
@@ -118,7 +135,19 @@ class XERAnalyzer:
                 fn_name = tool_call.function.name
                 if hasattr(self, fn_name):
                     fn = getattr(self, fn_name)
-                    result = fn()
+                    
+                    args_dict = {}
+                    if tool_call.function.arguments:
+                        try:
+                            args_dict = json.loads(tool_call.function.arguments)
+                        except Exception as e:
+                            logging.error(f"Failed to parse tool arguments: {e}")
+                            
+                    try:
+                        result = fn(**args_dict)
+                    except Exception as e:
+                        result = {"error": str(e)}
+                        
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -226,6 +255,13 @@ class XERAnalyzer:
 
         if any(w in query for w in ['discipline', 'wbs', 'by level', 'department', 'area']):
             results['discipline_summary'] = self.get_discipline_summary()
+
+        import re
+        activity_match = re.search(r'(?:activity|task)\s+([a-zA-Z0-9\-\_]+|"[^"]+"|\'[^\']+\')', query, re.IGNORECASE)
+        if activity_match:
+            term = activity_match.group(1).replace('"', '').replace("'", "").strip()
+            if term:
+                results['search_results'] = self.search_activities(term)
 
         if not results:
             results['project_health'] = self.get_project_health()
@@ -412,6 +448,41 @@ class XERAnalyzer:
             "recommendations": ["Review disciplines with significant negative float and trace logic dependencies."]
         }
         self._cache['discipline_summary'] = res
+        return res
+
+    def search_activities(self, search_term: str) -> Dict[str, Any]:
+        """Searches for specific activities by exact or partial name or code."""
+        if 'search_activities_' + search_term in self._cache:
+            return self._cache['search_activities_' + search_term]
+            
+        data = self.data_store.get_table_data(table_type="TASK", search=search_term, limit=20)
+        records = data.get("records", [])
+        
+        if not records:
+            res = {"summary": f"No activities found matching '{search_term}'.", "data": [], "metrics": {}}
+            self._cache['search_activities_' + search_term] = res
+            return res
+            
+        simplified_records = []
+        for r in records:
+            simplified_records.append({
+                "task_code": r.get('task_code', ''),
+                "task_name": r.get('task_name', ''),
+                "target_start_date": r.get('target_start_date', ''),
+                "target_end_date": r.get('target_end_date', ''),
+                "act_start_date": r.get('act_start_date', ''),
+                "act_end_date": r.get('act_end_date', ''),
+                "status": r.get('_analysis', {}).get('status', 'Unknown')
+            })
+            
+        res = {
+            "summary": f"Found {len(records)} activities matching '{search_term}'.",
+            "metrics": {"matched_activities": len(records)},
+            "data": simplified_records,
+            "issues": [],
+            "recommendations": []
+        }
+        self._cache['search_activities_' + search_term] = res
         return res
 
     def _get_ai_explanation(self, query: str, data: Dict[str, Any]) -> str:

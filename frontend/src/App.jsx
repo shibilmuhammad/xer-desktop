@@ -139,6 +139,37 @@ const VersionManagerSection = ({ versions, selectedVersionId, setSelectedVersion
   );
 };
 
+const OptimizedChatInput = ({ placeholder, onSubmit, isTyping, className, buttonClassName }) => {
+  const [inputValue, setInputValue] = useState('');
+  
+  const handleAsk = () => {
+    if (inputValue.trim() && !isTyping) {
+      onSubmit(inputValue);
+      setInputValue('');
+    }
+  };
+
+  return (
+    <div className="relative flex items-center w-full group pointer-events-auto shadow-2xl rounded-2xl ring-1 ring-black/5">
+      <input 
+        type="text"
+        className={className || "w-full pl-6 pr-14 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-gray-400 font-medium"}
+        placeholder={placeholder}
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
+      />
+      <button 
+        onClick={handleAsk}
+        disabled={!inputValue.trim() || isTyping}
+        className={buttonClassName || "absolute right-2 p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95 disabled:opacity-20 disabled:scale-100 transition-all"}
+      >
+        <Send size={18} />
+      </button>
+    </div>
+  );
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [authError, setAuthError] = useState(null)
@@ -424,15 +455,16 @@ function App() {
     }
   }, [viewMode, viewerTable, tablePage, tableSearch, selectedVersionId, viewerFilter])
 
-  const handleAsk = async () => {
-    if (!query || isTyping) return
-    const userMsg = { role: 'user', content: query }
+  const handleAsk = async (submittedQuery) => {
+    const q = typeof submittedQuery === 'string' ? submittedQuery : query;
+    if (!q || isTyping) return
+    const userMsg = { role: 'user', content: q }
     setMessages(prev => [...prev, userMsg])
     setQuery('')
     setIsTyping(true)
     
     try {
-      const res = await axios.post('/api/ask', new URLSearchParams({ query }))
+      const res = await axios.post('/api/ask', new URLSearchParams({ query: q }))
       setMessages(prev => [...prev, { role: 'assistant', content: res.data.response }])
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error connecting to the schedule analyzer.' }])
@@ -441,16 +473,17 @@ function App() {
     }
   }
 
-  const handleControllerAsk = async () => {
-    if (!controllerQuery || isControllerTyping) return
-    const userMsg = { role: 'user', content: controllerQuery }
+  const handleControllerAsk = async (submittedQuery) => {
+    const q = typeof submittedQuery === 'string' ? submittedQuery : controllerQuery;
+    if (!q || isControllerTyping) return
+    const userMsg = { role: 'user', content: q }
     setControllerMessages(prev => [...prev, userMsg])
     setControllerQuery('')
     setIsControllerTyping(true)
     
     try {
       // Pass a context hint that we are in the Controller/Table view for comparisons
-      const res = await axios.post('/api/ask', new URLSearchParams({ query: controllerQuery }))
+      const res = await axios.post('/api/ask', new URLSearchParams({ query: q }))
       setControllerMessages(prev => [...prev, { role: 'assistant', content: res.data.response }])
     } catch (err) {
       setControllerMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error connecting to the controller intelligence engine.' }])
@@ -979,21 +1012,13 @@ function App() {
                
                {/* Floating Chat Input Anchor */}
                <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-full max-w-2xl px-8 pointer-events-none">
-                 <div className="w-full relative group pointer-events-auto shadow-2xl rounded-2xl ring-1 ring-black/5">
-                   <input 
-                     className="w-full pl-6 pr-14 py-4.5 bg-white/95 backdrop-blur-md border border-gray-200 shadow-xl rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-400 transition-all outline-none text-sm placeholder:text-gray-400 font-medium"
-                     placeholder="Ask about schedule delays, critical path, or risks..." 
-                     value={query}
-                     onChange={(e) => setQuery(e.target.value)}
-                     onKeyDown={(e) => e.key === 'Enter' && handleAsk()}
-                   />
-                   <button 
-                     onClick={handleAsk}
-                     className="absolute right-2.5 top-1/2 -translate-y-1/2 p-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-lg shadow-blue-200 text-white"
-                   >
-                     <Send size={18} />
-                   </button>
-                 </div>
+                 <OptimizedChatInput 
+                   placeholder="Ask about schedule delays, critical path, or risks..."
+                   isTyping={isTyping}
+                   onSubmit={handleAsk}
+                   className="w-full pl-6 pr-14 py-4.5 bg-white/95 backdrop-blur-md border border-gray-200 shadow-xl rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-400 transition-all outline-none text-sm placeholder:text-gray-400 font-medium"
+                   buttonClassName="absolute right-2.5 top-1/2 -translate-y-1/2 p-2.5 bg-blue-600 hover:bg-blue-700 rounded-xl transition-all shadow-lg shadow-blue-200 text-white"
+                 />
                </div>
              </div>
            </div>
@@ -1413,23 +1438,13 @@ function App() {
 
                   {/* Input Area */}
                   <div className="p-6 bg-white border-t border-gray-100">
-                    <div className="relative flex items-center">
-                      <input 
-                        type="text"
-                        placeholder="Compare baseline vs update..."
-                        value={controllerQuery}
-                        onChange={(e) => setControllerQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleControllerAsk()}
-                        className="w-full pl-6 pr-14 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-gray-400 font-medium"
-                      />
-                      <button 
-                        onClick={handleControllerAsk}
-                        disabled={!controllerQuery || isControllerTyping}
-                        className="absolute right-2 p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95 disabled:opacity-20 disabled:scale-100 transition-all"
-                      >
-                        <Send size={18} />
-                      </button>
-                    </div>
+                    <OptimizedChatInput 
+                      placeholder="Compare baseline vs update..."
+                      isTyping={isControllerTyping}
+                      onSubmit={handleControllerAsk}
+                      className="w-full pl-6 pr-14 py-4 bg-gray-50 border border-gray-100 rounded-2xl text-sm focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-gray-400 font-medium"
+                      buttonClassName="absolute right-2 p-2.5 bg-blue-600 text-white rounded-xl shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95 disabled:opacity-20 disabled:scale-100 transition-all"
+                    />
                   </div>
                 </div>
               )}
