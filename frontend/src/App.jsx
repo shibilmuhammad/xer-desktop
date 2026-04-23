@@ -129,7 +129,11 @@ function App() {
 
   const fetchTableData = async () => {
     try {
-      const res = await axios.get(`/api/xer-data?table=${viewerTable}&page=${tablePage}&search=${tableSearch}&version_id=${selectedVersionId}&filter=${viewerFilter}`)
+      let reqTable = viewerTable
+      if (viewerTable === 'TASK') reqTable = 'HIERARCHY'
+      if (viewerTable === 'WBS') reqTable = 'WBS_HIERARCHY'
+      
+      const res = await axios.get(`/api/xer-data?table=${reqTable}&page=${tablePage}&search=${tableSearch}&version_id=${selectedVersionId}&filter=${viewerFilter}`)
       setTableData(res.data)
     } catch (err) {
       console.error('Failed to fetch table data', err)
@@ -441,9 +445,9 @@ function App() {
     try {
       const date = new Date(dateStr.split(' ')[0])
       if (isNaN(date.getTime())) return dateStr
-      return new Intl.DateTimeFormat('en-US', { 
+      return new Intl.DateTimeFormat('en-GB', { 
+        day: '2-digit',
         month: 'short', 
-        day: 'numeric', 
         year: 'numeric' 
       }).format(date)
     } catch (e) {

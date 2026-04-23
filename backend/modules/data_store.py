@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 from typing import Dict, List, Optional, Any
+from .scheduler import CPMScheduler
 
 class XERDataStore:
     """Stores all XER data with pre-computed statistics"""
@@ -16,17 +17,90 @@ class XERDataStore:
         if type == "baseline":
             version_id = "baseline"
             
+        # Extract hours_per_day from CALENDAR if available
+        hpd = 8.0 # Default
+        if 'tables' in data and 'CALENDAR' in data['tables']:
+            cal_table = data['tables']['CALENDAR']
+            if cal_table:
+                # Get day_hr_cnt from the first calendar entry that has it
+                for cal in cal_table:
+                    if 'day_hr_cnt' in cal and cal['day_hr_cnt']:
+                        try:
+                            hpd = float(cal['day_hr_cnt'])
+                            break
+                        except:
+                            continue
+        
         self.versions[version_id] = {
             'id': version_id,
             'type': type,
             'name': name,
             'data_date': data_date,
             'data': data,
-            'df': self._create_dataframes(data)
+            'df': self._create_dataframes(data),
+            'hours_per_day': hpd
         }
+        
+        # Trigger CPM Calculation
+        self._run_cpm(version_id)
+        
+        # Build Dependency Graph for AI/UI
+        self._build_dependency_graph(version_id)
+        
         self.active_version_id = version_id
         self._cached_stats = None
         return version_id
+
+    def _build_dependency_graph(self, version_id: str):
+        """Builds a human-readable dependency map for each activity."""
+        v = self.versions[version_id]
+        if 'tasks' not in v['df'] or 'taskpred' not in v['df']: return
+
+        tasks_df = v['df']['tasks']
+        rels_df = v['df']['taskpred']
+        
+        # Map IDs to Names
+        id_to_name = dict(zip(tasks_df['task_id'], tasks_df['task_name']))
+        type_map = {'PR_FS': 'FS', 'PR_SS': 'SS', 'PR_FF': 'FF', 'PR_SF': 'SF'}
+
+        v['dependency_graph'] = {tid: {'predecessors': [], 'successors': []} for tid in tasks_df['task_id']}
+        
+        for _, row in rels_df.iterrows():
+            sid = row['task_id']      # Successor
+            pid = row['pred_task_id'] # Predecessor
+            rtype = type_map.get(row['pred_type'], row['pred_type'])
+            lag = row.get('lag_hr_cnt', 0)
+
+            if sid in id_to_name and pid in id_to_name:
+                v['dependency_graph'][sid]['predecessors'].append({
+                    'id': pid,
+                    'name': id_to_name[pid],
+                    'type': rtype,
+                    'lag': lag
+                })
+                v['dependency_graph'][pid]['successors'].append({
+                    'id': sid,
+                    'name': id_to_name[sid],
+                    'type': rtype,
+                    'lag': lag
+                })
+
+    def _run_cpm(self, version_id: str):
+        """Internal helper to trigger CPM scheduling for a version."""
+        v = self.versions[version_id]
+        dfs = v['df']
+        if 'tasks' not in dfs or 'taskpred' not in dfs:
+            return
+
+        # Get project start date
+        start_date_str = dfs['tasks']['target_start_date'].dropna().min()
+        if pd.isnull(start_date_str):
+            start_date = pd.Timestamp.now()
+        else:
+            start_date = pd.to_datetime(start_date_str)
+
+        scheduler = CPMScheduler(hours_per_day=v.get('hours_per_day', 8.0))
+        v['df']['tasks'] = scheduler.calculate(dfs['tasks'], dfs['taskpred'], start_date)
 
     def remove_version(self, version_id: str):
         if version_id in self.versions:
@@ -110,8 +184,18 @@ class XERDataStore:
             pred_df = source['df']['taskpred']
             all_task_ids = set(tasks_df['task_id'].tolist())
             has_successor = set(pred_df['pred_task_id'].tolist())
-            work_task_ids = set(tasks_df[~tasks_df['task_type'].isin(['TT_LOE', 'TT_Mile', 'TT_FinMile'])]['task_id'].tolist())
-            stats['open_ended_count'] = len((all_task_ids - has_successor) & work_task_ids)
+            has_predecessor = set(pred_df['task_id'].tolist())
+            
+            # Open Start: No predecessors
+            open_starts = tasks_df[~tasks_df['task_id'].isin(has_predecessor)]
+            # Open Finish: No successors
+            open_finishes = tasks_df[~tasks_df['task_id'].isin(has_successor)]
+            
+            stats['open_start_count'] = len(open_starts)
+            stats['open_finish_count'] = len(open_finishes)
+            stats['open_start_names'] = open_starts['task_name'].tolist()
+            stats['open_finish_names'] = open_finishes['task_name'].tolist()
+            stats['open_ended_count'] = len(open_starts) + len(open_finishes)
 
         if 'target_start_date' in tasks_df.columns:
             stats['project_start'] = str(tasks_df['target_start_date'].dropna().min())[:10]
@@ -160,8 +244,14 @@ class XERDataStore:
         baseline_map = self._get_baseline_map()
         
         # 1. Normalize & Pre-process
-        df['float_hrs'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0) if 'total_float_hr_cnt' in df.columns else 0
-        df['float_days'] = df['float_hrs'] / self.hours_per_day
+        # Use computed total_float if available, fallback to P6 XER value
+        hpd = source.get('hours_per_day', 8.0)
+        if 'total_float' in df.columns:
+            df['float_days'] = pd.to_numeric(df['total_float'], errors='coerce').fillna(0)
+            df['float_hrs'] = df['float_days'] * hpd
+        else:
+            df['float_hrs'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0) if 'total_float_hr_cnt' in df.columns else 0
+            df['float_days'] = df['float_hrs'] / hpd
         
         date_cols = ['target_start_date', 'target_end_date', 'act_start_date', 'act_end_date']
         for col in date_cols:
@@ -265,11 +355,38 @@ class XERDataStore:
         incomplete_tasks = df[df['status_enum'] != 'COMPLETED']
         total_incomplete = len(incomplete_tasks)
         
-        # Check 1: Logic
+        # Check 1: Logic (Open Ends)
         has_pred = set(preds_df['task_id'].unique()) if not preds_df.empty else set()
         has_succ = set(preds_df['pred_task_id'].unique()) if not preds_df.empty else set()
-        dangling = incomplete_tasks[~(incomplete_tasks['task_id'].isin(has_pred)) | ~(incomplete_tasks['task_id'].isin(has_succ))]
-        pt1_val = (len(dangling) / total_incomplete * 100) if total_incomplete > 0 else 0
+        
+        open_starts = incomplete_tasks[~incomplete_tasks['task_id'].isin(has_pred)]
+        open_finishes = incomplete_tasks[~incomplete_tasks['task_id'].isin(has_succ)]
+        
+        open_start_count = len(open_starts)
+        open_finish_count = len(open_finishes)
+        open_start_names = open_starts['task_name'].tolist()
+        open_finish_names = open_finishes['task_name'].tolist()
+        
+        if open_start_count == 1 and open_finish_count == 1:
+            logic_status_str = "PASS"
+            logic_explanation = "Valid schedule structure with single start and finish"
+            pt1_val = 0.0 # Standard metric
+        elif open_start_count > 1 or open_finish_count > 1:
+            logic_status_str = "FAIL"
+            logic_explanation = f"Multiple open ends: {open_start_count} starts, {open_finish_count} finishes."
+            pt1_val = float(open_start_count + open_finish_count)
+        else:
+            logic_status_str = "WARNING"
+            logic_explanation = "Incomplete logic structure detected."
+            pt1_val = 100.0
+            
+        # Additional validation: Earliest/Latest check
+        if logic_status_str == "PASS":
+            is_earliest = open_starts['_dt_target_start_date'].min() == df['_dt_target_start_date'].min()
+            is_latest = open_finishes['_dt_target_end_date'].max() == df['_dt_target_end_date'].max()
+            if not (is_earliest and is_latest):
+                logic_status_str = "WARNING"
+                logic_explanation = "Open ends are valid in count but not at project boundaries."
         
         # Check 2: Leads (Negative Lag)
         leads_count = len(preds_df[pd.to_numeric(preds_df['lag_hr_cnt'], errors='coerce') < 0]) if not preds_df.empty else 0
@@ -358,7 +475,7 @@ class XERDataStore:
         pt13_val = round((project_work_days + min_float_days) / project_work_days, 3)
 
         assessment = [
-            {"id": 1, "name": "Logic", "measure": "% tasks missing links (dangling)", "val": float(pt1_val), "threshold": "<= 5%", "status": bool(pt1_val <= 5)},
+            {"id": 1, "name": "Logic", "measure": "Open Starts & Finishes", "val": float(pt1_val), "threshold": "1 Start / 1 Finish", "status": bool(logic_status_str == "PASS"), "status_text": logic_status_str, "explanation": logic_explanation, "details": {"starts": open_start_names, "finishes": open_finish_names}},
             {"id": 2, "name": "Leads", "measure": "% links with Negative Lag", "val": float(pt2_val), "threshold": "0%", "status": bool(pt2_val == 0)},
             {"id": 3, "name": "Lags", "measure": "% links with Positive Lag", "val": float(pt3_val), "threshold": "<= 5%", "status": bool(pt3_val <= 5)},
             {"id": 4, "name": "Rel Types", "measure": "% Finish-to-Start relationships", "val": float(pt4_val), "threshold": ">= 90%", "status": bool(pt4_val >= 90)},
@@ -635,7 +752,141 @@ class XERDataStore:
         # Sort by impact (negative float)
         return sorted(results, key=lambda x: x['avg_float'])
 
+    def get_wbs_hierarchy(self, source_id: Optional[str] = None, search: str = "", filter_type: str = "ALL", include_activities: bool = True) -> Dict:
+        """Constructs a recursive WBS tree and maps filtered activities to their respective nodes."""
+        source = self.get_version(source_id)
+        if not source or 'df' not in source: return {"records": [], "total": 0}
+        
+        wbs_df = source['df'].get('projwbs')
+        tasks_df = source['df'].get('tasks')
+        
+        if wbs_df is None: return {"records": [], "total": 0}
+        
+        # 1. Process and Filter Tasks (similar to get_table_data)
+        tasks = []
+        if tasks_df is not None and include_activities:
+            df = tasks_df.copy()
+            
+            if search:
+                mask = df[['task_name', 'task_code']].apply(lambda x: x.str.contains(search, case=False, na=False)).any(axis=1)
+                df = df[mask]
+                
+            if filter_type != 'ALL':
+                analysis = self.get_deterministic_analysis(source_id)
+                metrics = analysis.get('activityAnalysis', {})
+                
+                def check_filter(tid):
+                    m = metrics.get(tid, {})
+                    status = m.get('status_enum')
+                    if filter_type in ['CRITICAL', 'NEG_FLOAT'] and status == 'COMPLETED': return False
+                    if filter_type == 'CRITICAL': return m.get('is_critical_p6', False)
+                    if filter_type == 'NEG_FLOAT': return (m.get('float_hrs', 0) < 0)
+                    if filter_type == 'DELAYED': return (m.get('delay_days', 0) > 0) and status != 'COMPLETED'
+                    if filter_type == 'DELAYED_CRITICAL': return m.get('delay_float_category') == 'DELAYED_CRITICAL'
+                    if filter_type == 'DELAYED_NEGATIVE': return m.get('delay_float_category') == 'DELAYED_NEGATIVE'
+                    return True
+                
+                df = df[df['task_id'].apply(check_filter)]
+                
+            # Inject Analysis
+            analysis_dict = self.get_deterministic_analysis(source_id)
+            activity_metrics = analysis_dict.get('activityAnalysis', {})
+            
+            hpd = source.get('hours_per_day', 8.0)
+            for rec in df.to_dict('records'):
+                tid = rec.get('task_id')
+                m = activity_metrics.get(tid, {})
+                rec['duration_days'] = round(pd.to_numeric(rec.get('target_drtn_hr_cnt', 0), errors='coerce') / hpd, 1)
+                rec['_analysis'] = {
+                    'status': m.get('status_enum', 'NOT_STARTED'),
+                    'delay_days': round(m.get('delay_days', 0), 1),
+                    'is_critical': m.get('is_critical_p6', False),
+                    'current_end_date': str(m.get('_dt_current_end_date', '-')).split(' ')[0],
+                    'is_predicted': m.get('is_predicted_date', False),
+                    'float_hrs': m.get('float_hrs', 0),
+                    'delay_float_category': m.get('delay_float_category', 'SAFE'),
+                    'early_start': rec.get('early_start'),
+                    'early_finish': rec.get('early_finish'),
+                    'late_start': rec.get('late_start'),
+                    'late_finish': rec.get('late_finish'),
+                    'total_float': rec.get('total_float'),
+                    'predecessors': source.get('dependency_graph', {}).get(tid, {}).get('predecessors', []),
+                    'successors': source.get('dependency_graph', {}).get(tid, {}).get('successors', [])
+                }
+                tasks.append(rec)
+                
+        # 2. Group tasks by wbs_id
+        wbs_tasks = {}
+        for t in tasks:
+            wid = t.get('wbs_id')
+            if wid not in wbs_tasks: wbs_tasks[wid] = []
+            wbs_tasks[wid].append(t)
+            
+        # 3. Build WBS Node Dictionary
+        wbs_nodes = {}
+        for rec in wbs_df.to_dict('records'):
+            wid = rec.get('wbs_id')
+            pid = rec.get('parent_wbs_id')
+            if pd.isna(pid) or pid == 'nan': pid = None
+            
+            # Clean floats from nans
+            for k, v in rec.items():
+                if pd.isna(v): rec[k] = None
+                
+            wbs_nodes[wid] = {
+                **rec,
+                "parent_wbs_id": pid,
+                "children": [],
+                "activities": wbs_tasks.get(wid, [])
+            }
+            
+        # 4. Construct Tree
+        tree = []
+        for wid, node in wbs_nodes.items():
+            pid = node.get('parent_wbs_id')
+            if pid and pid in wbs_nodes:
+                wbs_nodes[pid]['children'].append(node)
+            else:
+                tree.append(node)
+                
+        # 5. Prune empty branches
+        def prune(node):
+            node['children'] = [child for child in node['children'] if prune(child)]
+            has_activities = len(node.get('activities', [])) > 0
+            has_children = len(node.get('children', [])) > 0
+            is_filtered = bool(search) or (filter_type != "ALL")
+            if is_filtered and not (has_activities or has_children):
+                return False
+            return True
+            
+        tree = [root for root in tree if prune(root)]
+        
+        # Sort children sequentially
+        def sort_tree(node):
+            if 'seq_num' in node and node['seq_num'] is not None:
+                node['children'].sort(key=lambda x: pd.to_numeric(x.get('seq_num', 0), errors='coerce'))
+            else:
+                node['children'].sort(key=lambda x: str(x.get('wbs_short_name', '')))
+            for child in node['children']:
+                sort_tree(child)
+                
+        for root in tree: sort_tree(root)
+        
+        analysis = self.get_deterministic_analysis(source_id)
+        
+        return {
+            "records": tree,
+            "total": sum(len(wbs_tasks[w]) for w in wbs_tasks),
+            "table": "HIERARCHY",
+            "projectAnalysis": analysis.get('projectSummary', {})
+        }
+
     def get_table_data(self, table_type: str = "TASK", search: str = "", limit: int = 100, offset: int = 0, source_id: Optional[str] = None, filter_type: str = "ALL") -> Dict:
+        if table_type == "HIERARCHY":
+            return self.get_wbs_hierarchy(source_id, search, filter_type, include_activities=True)
+        elif table_type == "WBS_HIERARCHY":
+            return self.get_wbs_hierarchy(source_id, search, filter_type, include_activities=False)
+
         """Fetch and format paginated table data from a specific version ID"""
         source = self.get_version(source_id)
         if not source or 'df' not in source: return {"records": [], "total": 0}
@@ -683,6 +934,26 @@ class XERDataStore:
                 return True
             
             df = df[df['task_id'].apply(check_filter)]
+
+        if table_type.upper() == "RELATIONSHIPS":
+            # Perform Joins to get human readable names
+            tasks_df = source['df']['tasks'][['task_id', 'task_name']]
+            
+            # Join for Successor Name
+            df = df.merge(tasks_df, on='task_id', how='left')
+            df.rename(columns={'task_name': 'activity_name'}, inplace=True)
+            
+            # Join for Predecessor Name
+            df = df.merge(tasks_df, left_on='pred_task_id', right_on='task_id', how='left', suffixes=('', '_pred'))
+            df.rename(columns={'task_name': 'predecessor_name'}, inplace=True)
+            
+            # Map Relationship Types
+            type_map = {'PR_FS': 'FS', 'PR_SS': 'SS', 'PR_FF': 'FF', 'PR_SF': 'SF'}
+            df['relationship_type'] = df['pred_type'].map(type_map).fillna(df['pred_type'])
+            df['lag'] = df['lag_hr_cnt']
+            
+            # Select relevant columns
+            df = df[['activity_name', 'predecessor_name', 'relationship_type', 'lag']]
             
         total = len(df)
         
@@ -696,15 +967,24 @@ class XERDataStore:
             activity_metrics = analysis.get('activityAnalysis', {})
             
             records = []
+            hpd = source.get('hours_per_day', 8.0)
             for rec in paginated_df.to_dict('records'):
                 tid = rec.get('task_id')
                 metrics = activity_metrics.get(tid, {})
+                rec['duration_days'] = round(pd.to_numeric(rec.get('target_drtn_hr_cnt', 0), errors='coerce') / hpd, 1)
                 rec['_analysis'] = {
                     'status': metrics.get('status_enum', 'NOT_STARTED'),
                     'delay_days': round(metrics.get('delay_days', 0), 1),
                     'is_critical': metrics.get('is_critical_p6', False),
                     'current_end_date': str(metrics.get('_dt_current_end_date', '-')).split(' ')[0],
-                    'is_predicted': metrics.get('is_predicted_date', False)
+                    'is_predicted': metrics.get('is_predicted_date', False),
+                    'early_start': rec.get('early_start'),
+                    'early_finish': rec.get('early_finish'),
+                    'late_start': rec.get('late_start'),
+                    'late_finish': rec.get('late_finish'),
+                    'total_float': rec.get('total_float'),
+                    'predecessors': source.get('dependency_graph', {}).get(tid, {}).get('predecessors', []),
+                    'successors': source.get('dependency_graph', {}).get(tid, {}).get('successors', [])
                 }
                 records.append(rec)
             return {

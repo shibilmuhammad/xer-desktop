@@ -38,24 +38,49 @@ const AssessmentTable = ({ stats }) => {
           </thead>
           <tbody className="divide-y divide-white/5">
             {stats.delay_matrix.assessment.filter(p => p.id !== 14).map((point) => (
-              <tr key={point.id} className="hover:bg-white/[0.02] transition-colors group">
+              <tr key={point.id} className="hover:bg-white/[0.02] transition-colors group border-b border-white/5 last:border-0">
                 <td className="px-8 py-5 text-sm font-black text-blue-500/70">{point.id}</td>
-                <td className="px-8 py-5 text-sm font-bold text-gray-100 group-hover:text-white transition-colors">{point.name}</td>
-                <td className="px-8 py-5 text-[11px] text-gray-400 font-medium leading-relaxed max-w-xs">{point.measure}</td>
+                <td className="px-8 py-5">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-100 group-hover:text-white transition-colors">{point.name}</span>
+                    {point.id === 1 && point.details && (
+                      <div className="mt-2 flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Starts:</span>
+                          <span className="text-[10px] text-gray-500 truncate max-w-[200px] italic">{point.details.starts?.join(', ') || 'None'}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-black text-green-400 uppercase tracking-widest">Finishes:</span>
+                          <span className="text-[10px] text-gray-500 truncate max-w-[200px] italic">{point.details.finishes?.join(', ') || 'None'}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-8 py-5">
+                   <div className="flex flex-col gap-1 max-w-xs">
+                     <span className="text-[11px] text-gray-400 font-medium leading-relaxed">{point.measure}</span>
+                     {point.explanation && <span className="text-[9px] text-blue-400/70 font-bold italic">{point.explanation}</span>}
+                   </div>
+                </td>
                 <td className="px-8 py-5 text-xs font-black text-gray-300 font-mono tracking-tighter text-center">{point.threshold}</td>
                 <td className="px-8 py-5">
                   <span className="text-[12px] font-black text-white bg-white/5 px-3 py-1 rounded-lg border border-white/10">
                     {
                       point.id === 13 ? point.val.toFixed(3) : 
-                      (point.id === 12 || point.id === 14 || point.id === 9 || point.id === 10) ? (point.status ? 'Pass' : 'Fail') :
+                      (point.id === 1 || point.id === 12 || point.id === 14 || point.id === 9 || point.id === 10) ? (point.status_text || (point.status ? 'Pass' : 'Fail')) :
                       typeof point.val === 'number' ? point.val.toFixed(1) + '%' : point.val
                     }
                   </span>
                 </td>
                 <td className="px-8 py-5">
                   <div className="flex justify-center">
-                    <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm border ${point.status ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}>
-                       {point.status ? 'Pass' : 'Fail'}
+                    <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-sm border ${
+                      (point.status_text === 'PASS' || point.status === true) ? 'bg-green-500/20 text-green-400 border-green-500/30' : 
+                      (point.status_text === 'WARNING') ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' :
+                      'bg-red-500/20 text-red-400 border-red-500/30'
+                    }`}>
+                       {point.status_text || (point.status ? 'Pass' : 'Fail')}
                     </span>
                   </div>
                 </td>
