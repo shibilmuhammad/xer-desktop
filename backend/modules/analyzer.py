@@ -1,512 +1,464 @@
-import os
-import json
-import logging
-import pandas as pd
+import os, json, logging, re
+import difflib
 from openai import OpenAI
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from .data_store import XERDataStore
+
+logger = logging.getLogger(__name__)
+
+# ── Intent constants ──────────────────────────────────────────────────────────
+INTENT_ACTIVITY_SEARCH = "ACTIVITY_SEARCH"
+INTENT_LIST_DELAYED    = "LIST_DELAYED"
+INTENT_LIST_CRITICAL   = "LIST_CRITICAL"
+INTENT_LIST_NEG_FLOAT  = "LIST_NEG_FLOAT"
+INTENT_ANALYTICAL      = "ANALYTICAL"
+INTENT_INTEGRITY       = "INTEGRITY"
+INTENT_HEALTH          = "HEALTH"
+INTENT_WBS             = "WBS_SUMMARY"
+INTENT_CLARIFY         = "CLARIFY"
+
+# ── Pass-1 deterministic patterns ─────────────────────────────────────────────
+_P1: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"\bneg(?:ative)?\s*float\b|\bneg(?:ative)?\s*slack\b", re.I), INTENT_LIST_NEG_FLOAT),
+    (re.compile(r"\bcritical\s+path\b|\blongest\s+path\b", re.I),              INTENT_LIST_CRITICAL),
+    (re.compile(r"\bcritical\s+activit|\bcritical\s+task", re.I),              INTENT_LIST_CRITICAL),
+    (re.compile(r"\bdelay(?:ed)?\b|\bbehind\b|\blate\s+task|\boverdue\b|\bslippage\b", re.I), INTENT_LIST_DELAYED),
+    (re.compile(r"\bopen\s+(?:start|end|finish)s?\b|\bopen\s+ends?\b", re.I), INTENT_INTEGRITY),
+    (re.compile(r"\b(?:schedule\s+)?(?:logic|integrity|sequence)\b", re.I),    INTENT_INTEGRITY),
+    (re.compile(r"\bpredecessor\b|\bsuccessor\b|\bconstraint\b", re.I),        INTENT_INTEGRITY),
+    (re.compile(r"\bwbs\b|\bdiscipline\b|\bbreakdown\b|\bzone\b", re.I),       INTENT_WBS),
+    (re.compile(r"\boverall\s+health\b|\bproject\s+status\b|\boverview\b", re.I), INTENT_HEALTH),
+    (re.compile(r"\b(?:can\s+i|if\s+i)\s+delay\b|\bfloat\s+impact\b", re.I), INTENT_ANALYTICAL),
+]
+
+# ── LLM system prompt ─────────────────────────────────────────────────────────
+EXPLANATION_PROMPT = """You are XerAgent — a Senior Primavera P6 Forensic Analyst. EXPLANATION ONLY.
+The Python backend has done ALL calculations. Never recalculate, estimate, or guess values.
+
+STRICT RULES:
+1. insights[] = human-readable English sentences ONLY. Never JSON/dict strings.
+   BAD:  "{'task': 'X', 'delay': 5}"
+   GOOD: "Activity X is 5 days delayed and sits on the critical path, directly threatening project completion."
+2. Each insight: "[Finding]. [What it means]. [Why it matters or action needed]."
+3. metrics{} values = strings or plain numbers ONLY. Never objects or arrays.
+4. If is_truncated=true, first sentence of summary MUST be: "Showing [displayed_count] of [total_count] activities."
+5. For search suggestions: state "Did you mean: [X], [Y]?" prominently.
+6. For integrity: include activity names + PASS/WARNING/FAIL + impact explanation.
+7. summary uses Markdown tables when listing multiple activities.
+8. template_type: "list" | "activity" | "integrity" | "analysis" | "health" | "clarify"
+
+Return ONLY valid JSON (no fences):
+{"summary":"...","metrics":{"Label":value},"insights":["sentence."],"recommendations":["action."],"template_type":"..."}"""
+
+PASS2_PROMPT = """Classify this P6 schedule query into ONE type:
+LIST_DELAYED, LIST_CRITICAL, LIST_NEG_FLOAT, ACTIVITY_SEARCH, ANALYTICAL, INTEGRITY, HEALTH, WBS_SUMMARY, CLARIFY
+
+Query: "{query}"
+Last focus: {focus}
+Context: {context}
+
+Return JSON: {{"type":"...","term":"activity name if ACTIVITY_SEARCH else null"}}"""
+
 
 class XERAnalyzer:
     def __init__(self, ollama_url: str = "http://127.0.0.1:11434/v1"):
         self.data_store = XERDataStore()
         self.ollama_url = ollama_url
-        
-        # Check for OpenAI Key to determine default provider
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
         self.provider = "openai" if api_key else "local"
         self.model = "gpt-4o" if api_key else "llama3"
-        
         self._initialize_client()
-        self._cache = {}
+        self.sessions: Dict[str, Dict] = {}
 
     def _initialize_client(self):
-        """Internal helper to setup the OpenAI client based on the current provider."""
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        
         if self.provider == "openai" and api_key:
             self.client = OpenAI(api_key=api_key)
-            # Use gpt-4o as default for high-precision tool calling
-            if self.model == "llama3": self.model = "gpt-4o" 
+            if self.model == "llama3": self.model = "gpt-4o"
         else:
-            # Fallback to local if no API key or explicitly set to local
             self.provider = "local"
             self.client = OpenAI(base_url=self.ollama_url, api_key="ollama")
             if self.model == "gpt-4o": self.model = "llama3"
 
-    def get_config(self) -> Dict[str, str]:
-        """Returns the current AI configuration."""
-        return {
-            "provider": self.provider,
-            "model": self.model,
-            "ollama_url": self.ollama_url,
-            "has_openai_key": bool(os.getenv("OPENAI_API_KEY", "").strip())
-        }
+    def get_config(self) -> Dict:
+        return {"provider": self.provider, "model": self.model,
+                "ollama_url": self.ollama_url,
+                "has_openai_key": bool(os.getenv("OPENAI_API_KEY", "").strip())}
 
     def set_config(self, provider: str, model: Optional[str] = None):
-        """Updates the AI configuration and re-initializes the client."""
-        if provider in ["openai", "local"]:
-            self.provider = provider
-        if model:
-            self.model = model
+        if provider in ["openai", "local"]: self.provider = provider
+        if model: self.model = model
         self._initialize_client()
         return self.get_config()
 
-    def get_basic_stats(self, version_id: Optional[str] = None) -> Dict[str, Any]:
-        """Wrapper for backward compatibility and version-specific stats"""
+    def get_basic_stats(self, version_id: Optional[str] = None) -> Dict:
         return self.data_store.compute_basic_stats(version_id)
 
-    def analyze(self, query: str) -> Dict[str, Any]:
-        """Main entry point: Route -> Execute -> structured dict"""
-        self._cache.clear() 
-        
+    # ── Session ───────────────────────────────────────────────────────────────
+    def _get_session(self, sid: str) -> Dict:
+        if sid not in self.sessions:
+            self.sessions[sid] = {"history": [], "focus_id": None,
+                                  "last_search_term": None, "last_result_ids": [],
+                                  "last_intent": None}
+        return self.sessions[sid]
+
+    def _update_session(self, s: Dict, query: str, intent: Dict, tool: Dict, resp: Dict):
+        s["last_intent"] = intent["type"]
+        data = tool.get("data", [])
+        if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+            s["focus_id"] = data[0].get("id")
+        if intent["type"] == INTENT_ACTIVITY_SEARCH and intent.get("term"):
+            s["last_search_term"] = intent["term"]
+            s["last_result_ids"] = [d.get("id") for d in data if isinstance(d, dict)]
+        s["history"].append({"q": query[:120], "intent": intent["type"],
+                              "snippet": resp.get("summary", "")[:150]})
+        if len(s["history"]) > 5: s["history"].pop(0)
+
+    # ── Intent Classification ─────────────────────────────────────────────────
+    def _resolve_references(self, query: str, session: Dict) -> str:
+        """Replace pronouns with last known context."""
+        pronouns = re.compile(r"\b(it|this|that|the first one|the task|these tasks)\b", re.I)
+        if pronouns.search(query) and session.get("last_search_term"):
+            return pronouns.sub(session["last_search_term"], query)
+        return query
+
+    def _classify_intent(self, query: str, context: Optional[Dict], session: Dict) -> Dict:
+        # Pass 1: deterministic regex
+        for pattern, intent_type in _P1:
+            if pattern.search(query):
+                return {"type": intent_type, "term": None}
+
+        # Check if it looks like an activity search (contains a noun phrase not caught above)
+        words = query.strip().split()
+        if len(words) >= 2 and not re.search(r"\b(show|list|all|how many|count|total)\b", query, re.I):
+            return {"type": INTENT_ACTIVITY_SEARCH, "term": query.strip()}
+
+        # Pass 2: LLM for ambiguous
         try:
-            if self.provider == "openai":
-                return self._analyze_with_tools(query)
-            else:
-                return self._analyze_local(query)
-        except Exception as e:
-            logging.error(f"Analysis error: {e}")
-            return self._fallback_deterministic(query, str(e))
-
-    def _analyze_with_tools(self, query: str) -> Dict[str, Any]:
-        tools = [
-            {"type": "function", "function": {"name": "get_project_health", "description": "Returns the high-level P6 analytical status, health score, and days of delay."}},
-            {"type": "function", "function": {"name": "calculate_project_delay", "description": "Calculates project-level delay based on max finish variance between baseline and updates."}},
-            {"type": "function", "function": {"name": "get_schedule_quality", "description": "Provides a detailed DCMA-style quality report and score."}},
-            {"type": "function", "function": {"name": "get_critical_path", "description": "Identifies critical path activities (Float <= 0) and counts them."}},
-            {"type": "function", "function": {"name": "get_negative_float_activities", "description": "Filters activities with negative float."}},
-            {"type": "function", "function": {"name": "check_open_ended_activities", "description": "Detects activities missing predecessors or successors."}},
-            {"type": "function", "function": {"name": "get_delay_drivers", "description": "Identifies activities causing the most project-level slippage."}},
-            {"type": "function", "function": {"name": "get_discipline_summary", "description": "Provides a forensic summary of status, duration, and float aggregated by project discipline. This uses Activity Codes (The Gold Standard) prioritized over WBS levels, and automatically separates Milestones for a clean executive view."}},
-            {
-                "type": "function",
-                "function": {
-                    "name": "search_activities",
-                    "description": "Searches the schedule database for specific activities by exact or partial name, code, or description. Use this tool specifically when the user asks for details (like start/finish dates, status) of a specific activity by name.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "search_term": {
-                                "type": "string",
-                                "description": "The exact or partial name/code of the activity to search for."
-                            }
-                        },
-                        "required": ["search_term"]
-                    }
-                }
-            }
-        ]
-        
-        system_prompt = """
-        You are a Senior Forensic Schedule Delay Analyst and P6 Expert.
-        You communicate with professional authority, precision, and deep analytical insight. 
-        Your goal is to provide realistic, data-grounded, and actionable schedule intelligence.
-        
-        For questions about the specific project:
-        1. Always use provided tools to fetch grounded facts.
-        2. DO NOT just list numbers. Explain the causal relationship (e.g., 'The Mechanical discipline is driving the critical path; its delay has eroded the project's buffer').
-        3. Use professional terminology: "Concurrent delay", "Driving relationship", "Logic trace", "Float consumption", "Status variance".
-        4. **Detailed Listing**: When asked to list high-risk or delayed activities, use the 'data' field in tool results.
-        5. **True Discipline Summaries**: Use the 'get_discipline_summary' tool. It provides a cleaned, forensic view of the project departments (e.g., Civil, Design, Procurement). 
-           - **NOTE**: 'Project Milestones' is a separate category containing the core schedule checkpoints. 
-           - **Presentation**: Present the results in a professional Markdown table sorted by Average Float (most negative first).
-        
-        For general questions, use your PMBOK/P6 expertise to provide best-practice guidance.
-        """
-        
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query}
-        ]
-        
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=0.1
-        )
-        
-        message = response.choices[0].message
-        messages.append(message)
-        
-        if message.tool_calls:
-            for tool_call in message.tool_calls:
-                fn_name = tool_call.function.name
-                if hasattr(self, fn_name):
-                    fn = getattr(self, fn_name)
-                    
-                    args_dict = {}
-                    if tool_call.function.arguments:
-                        try:
-                            args_dict = json.loads(tool_call.function.arguments)
-                        except Exception as e:
-                            logging.error(f"Failed to parse tool arguments: {e}")
-                            
-                    try:
-                        result = fn(**args_dict)
-                    except Exception as e:
-                        result = {"error": str(e)}
-                        
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": fn_name,
-                        "content": json.dumps(result)
-                    })
-                else:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": fn_name,
-                        "content": "{}"
-                    })
-        else:
-            # If no tools called, we could force a general analysis tool, or just let it respond.
-            pass
-            
-        messages.append({
-            "role": "system", 
-            "content": "Return the final analysis STRICTLY as a JSON object. The 'summary' must be a professional executive summary with analytical depth (use Markdown for bolding/emphasis). If the user asked for a list, include the detailed list of activities in the summary using Markdown tables. The 'metrics' should be numerical KPIs. The 'insights' should be strategic findings. Schema: {\"summary\": \"...\", \"metrics\": {...}, \"insights\": [...], \"recommendations\": [...]}"
-        })
-        
-        final_response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            response_format={"type": "json_object"},
-            temperature=0.1
-        )
-        
-        content = final_response.choices[0].message.content
-        return json.loads(content)
-
-    def _analyze_local(self, query: str) -> Dict[str, Any]:
-        analysis_results = self._route_query(query)
-        explanation = self._get_ai_explanation(query, analysis_results)
-        
-        metrics = {}
-        insights = []
-        recommendations = []
-        
-        for k, v in analysis_results.items():
-            if isinstance(v, dict):
-                metrics.update(v.get('metrics', {}))
-                insights.append(v.get('summary', ''))
-                issues = v.get('issues', [])
-                if issues: insights.extend(issues)
-                recs = v.get('recommendations', [])
-                if recs: recommendations.extend(recs)
-                    
-        return {
-            "summary": explanation,
-            "metrics": metrics,
-            "insights": insights,
-            "recommendations": recommendations
-        }
-        
-    def _fallback_deterministic(self, query: str, error: str) -> Dict[str, Any]:
-        res = self._route_query(query)
-        metrics = {}
-        insights = []
-        recommendations = []
-        for v in res.values():
-             if isinstance(v, dict):
-                 metrics.update(v.get('metrics', {}))
-                 insights.append(v.get('summary', ''))
-                 if v.get('issues'): insights.extend(v['issues'])
-                 if v.get('recommendations'): recommendations.extend(v['recommendations'])
-        return {
-            "summary": f"LLM Integration Failed ({error}). Showing deterministic raw data fallback.",
-            "metrics": metrics,
-            "insights": insights,
-            "recommendations": recommendations
-        }
-
-    # ------- DETERMINISTIC FUNCTIONS -------
-
-    def _route_query(self, query: str) -> Dict[str, Any]:
-        """Legacy keyword router for local fallback"""
-        query = query.lower()
-        results = {}
-
-        if any(w in query for w in ['delay', 'variance', 'behind', 'finish', 'date', 'late']):
-            results['delay_analysis'] = self.calculate_project_delay()
-            
-        if any(w in query for w in ['critical', 'longest path', 'driving']):
-            results['critical_path'] = self.get_critical_path()
-            
-        if any(w in query for w in ['negative float', 'float', 'slack']):
-            results['float_analysis'] = self.get_negative_float_activities()
-            
-        if any(w in query for w in ['open ended', 'dangling', 'integrity', 'logic', 'missing']):
-            results['integrity_checks'] = self.check_open_ended_activities()
-        
-        if any(w in query for w in ['quality', 'score', 'health', 'dcma', 'overview']):
-            results['schedule_quality'] = self.get_schedule_quality()
-            results['project_health'] = self.get_project_health()
-            
-        if any(w in query for w in ['driver', 'driving', 'cause', 'why']):
-            results['delay_drivers'] = self.get_delay_drivers()
-            
-        if any(w in query for w in ['compare', 'difference', 'status', 'summary', 'update', 'both']):
-            results['project_health'] = self.get_project_health()
-            results['delay_analysis'] = self.calculate_project_delay()
-            results['delay_drivers'] = self.get_delay_drivers()
-
-        if any(w in query for w in ['discipline', 'wbs', 'by level', 'department', 'area']):
-            results['discipline_summary'] = self.get_discipline_summary()
-
-        import re
-        activity_match = re.search(r'(?:activity|task)\s+([a-zA-Z0-9\-\_]+|"[^"]+"|\'[^\']+\')', query, re.IGNORECASE)
-        if activity_match:
-            term = activity_match.group(1).replace('"', '').replace("'", "").strip()
-            if term:
-                results['search_results'] = self.search_activities(term)
-
-        if not results:
-            results['project_health'] = self.get_project_health()
-            results['general_info'] = "The user asked a general question. Provide a high-level summary of the schedule's current health and delay standing based on the project_health data."
-
-        return results
-
-    def get_project_health(self) -> Dict[str, Any]:
-        if 'project_health' in self._cache: return self._cache['project_health']
-        analysis = self.data_store.get_deterministic_analysis()
-        summary = analysis.get('projectSummary', {})
-        metrics = summary.get('healthMetrics', {})
-        
-        res = {
-            "score": metrics.get('projectHealthScore', 0),
-            "status": metrics.get('healthStatus', 'Unknown'),
-            "is_constrained": metrics.get('is_constrained', False),
-            "delay_days": summary.get('projectDelayDays', 0),
-            "issues": metrics.get('qualityIssues', [])
-        }
-        self._cache['project_health'] = res
-        return res
-
-    def calculate_project_delay(self) -> Dict[str, Any]:
-        if 'project_delay' in self._cache: return self._cache['project_delay']
-        health = self.get_project_health()
-        delay_days = health['delay_days']
-        
-        summary_msg = f"The project finish date has shifted by {delay_days} days."
-        if delay_days == 0 and health['is_constrained']:
-            summary_msg = "The project finish date is currently fixed (0-day variance), but significant negative float suggests the schedule is constrained and internally delayed."
-        elif delay_days == 0:
-            summary_msg = "The project is currently on track with 0 days of variance."
-
-        res = {
-            "summary": summary_msg,
-            "metrics": {
-                "projectDelay": delay_days,
-                "isConstrained": health['is_constrained']
-            },
-            "issues": health['issues'],
-            "recommendations": ["Investigate hidden constraints preventing finish date movement."] if health['is_constrained'] else []
-        }
-        self._cache['project_delay'] = res
-        return res
-
-    def get_schedule_quality(self) -> Dict[str, Any]:
-        if 'schedule_quality' in self._cache: return self._cache['schedule_quality']
-        health = self.get_project_health()
-        res = {
-            "summary": f"Schedule Quality Score: {health['score']}/100 ({health['status']})",
-            "metrics": {"score": health['score']},
-            "issues": health['issues'],
-            "recommendations": ["Fix open-ended logic to improve critical path reliability."] if health['score'] < 80 else []
-        }
-        self._cache['schedule_quality'] = res
-        return res
-
-    def get_critical_path(self) -> Dict[str, Any]:
-        if 'critical_path' in self._cache: return self._cache['critical_path']
-        analysis = self.data_store.get_deterministic_analysis()
-        activity_metrics = analysis.get('activityAnalysis', {})
-        
-        critical_ids = [tid for tid, obj in activity_metrics.items() if obj.get('is_critical_p6')]
-        critical_list = []
-        for tid in critical_ids[:20]:  # Top 20 to avoid token bloat
-            act = activity_metrics[tid]
-            critical_list.append({
-                "id": tid,
-                "code": act.get('task_code', tid),
-                "name": act.get('task_name', 'Unknown'),
-                "delay_days": act.get('delay_days', 0),
-                "risk_level": "Critical"
-            })
-
-        total = len(activity_metrics)
-        pct = (len(critical_ids) / total) * 100 if total > 0 else 0
-
-        res = {
-            "summary": f"Detected {len(critical_ids)} activities on the critical path.",
-            "metrics": {
-                "criticalCount": len(critical_ids),
-                "criticalPct": f"{pct:.1f}%"
-            },
-            "data": critical_list,
-            "issues": ["Large critical path detected."] if len(critical_ids) > 50 else [],
-            "recommendations": ["Monitor prioritized activities for potential bottlenecks."]
-        }
-        self._cache['critical_path'] = res
-        return res
-
-    def get_negative_float_activities(self) -> Dict[str, Any]:
-        if 'negative_float' in self._cache: return self._cache['negative_float']
-        analysis = self.data_store.get_deterministic_analysis()
-        activity_metrics = analysis.get('activityAnalysis', {})
-        
-        neg_float_ids = [tid for tid, obj in activity_metrics.items() if (obj.get('float_hrs') or 0) < 0]
-        # Sort by most negative float
-        sorted_ids = sorted(neg_float_ids, key=lambda tid: activity_metrics[tid].get('float_hrs', 0))
-        
-        risky_list = []
-        for tid in sorted_ids[:20]:
-            act = activity_metrics[tid]
-            flt = act.get('float_hrs', 0)
-            level = "Extreme Risk" if flt < -200 else "High Risk" if flt < -100 else "Medium Risk"
-            risky_list.append({
-                "id": tid,
-                "code": act.get('task_code', tid),
-                "name": act.get('task_name', 'Unknown'),
-                "float_hrs": flt,
-                "risk_level": level
-            })
-            
-        res = {
-            "summary": f"Found {len(neg_float_ids)} activities with negative float.",
-            "metrics": {"negativeFloatCount": len(neg_float_ids)},
-            "data": risky_list,
-            "issues": ["Negative float indicates the project cannot meet its current constraints."] if neg_float_ids else [],
-            "recommendations": ["Verify 'Must Finish By' dates and out-of-sequence progress."] if neg_float_ids else []
-        }
-        self._cache['negative_float'] = res
-        return res
-
-    def check_open_ended_activities(self) -> Dict[str, Any]:
-        if 'open_ended' in self._cache: return self._cache['open_ended']
-        source = self.data_store.get_latest()
-        if not source or 'df' not in source: return {"summary": "No data available.", "metrics": {}, "issues": [], "recommendations": []}
-        
-        tasks_df = source['df'].get('tasks')
-        preds_df = source['df'].get('taskpred')
-        
-        if tasks_df is None or preds_df is None: 
-            return {
-                "summary": "Tables missing.",
-                "metrics": {},
-                "issues": ["Required XER tables (TASK/TASKPRED) not found."],
-                "recommendations": ["Ensure XER file contains project relationships."]
-            }
-
-        all_tids = set(tasks_df['task_id'])
-        has_pred = set(preds_df['task_id'])
-        has_succ = set(preds_df['pred_task_id'])
-
-        open_starts = list(all_tids - has_pred)
-        open_finishes = list(all_tids - has_succ)
-
-        res = {
-            "summary": f"Integrity Check: {len(open_starts)} Open Starts, {len(open_finishes)} Open Finishes detected.",
-            "metrics": {
-                "openStarts": len(open_starts),
-                "openFinishes": len(open_finishes)
-            },
-            "issues": ["Open-ended activities invalidate critical path reliability."] if (open_starts or open_finishes) else [],
-            "recommendations": ["Link open-ended activities to appropriate milestones."]
-        }
-        self._cache['open_ended'] = res
-        return res
-
-    def get_delay_drivers(self) -> Dict[str, Any]:
-        if 'delay_drivers' in self._cache: return self._cache['delay_drivers']
-        analysis = self.data_store.get_deterministic_analysis()
-        summary = analysis.get('projectSummary', {})
-        drivers = summary.get('topDrivers', [])
-
-        res = {
-            "summary": "Top delay drivers identified on the critical path.",
-            "metrics": {"impactedDriversCount": len(drivers)},
-            "data": drivers,
-            "issues": [f"Activity {d['task_code']} is driving {d['delay_days']} days of slippage." for d in drivers],
-            "recommendations": [f"Conduct recovery session for {d['task_code']} to recover {d['delay_days']} days." for d in drivers[:3]] + ["Re-baseline project to reflect current performance benchmarks."]
-        }
-        self._cache['delay_drivers'] = res
-        return res
-
-    def get_discipline_summary(self) -> Dict[str, Any]:
-        if 'discipline_summary' in self._cache: return self._cache['discipline_summary']
-        # target_level=2 provides the most common executive view (Project > Discipline)
-        data = self.data_store.get_wbs_summary(target_level=2)
-        res = {
-            "summary": "Project status aggregated by major discipline (WBS Level 2).",
-            "metrics": {"totalDisciplinesShown": len(data)},
-            "data": data,
-            "issues": [f"{d['discipline']} has active tasks with {d['avg_float']} avg float." for d in data[:5] if d['avg_float'] < 0],
-            "recommendations": ["Review disciplines with significant negative float and trace logic dependencies."]
-        }
-        self._cache['discipline_summary'] = res
-        return res
-
-    def search_activities(self, search_term: str) -> Dict[str, Any]:
-        """Searches for specific activities by exact or partial name or code."""
-        if 'search_activities_' + search_term in self._cache:
-            return self._cache['search_activities_' + search_term]
-            
-        data = self.data_store.get_table_data(table_type="TASK", search=search_term, limit=20)
-        records = data.get("records", [])
-        
-        if not records:
-            res = {"summary": f"No activities found matching '{search_term}'.", "data": [], "metrics": {}}
-            self._cache['search_activities_' + search_term] = res
-            return res
-            
-        simplified_records = []
-        for r in records:
-            simplified_records.append({
-                "task_code": r.get('task_code', ''),
-                "task_name": r.get('task_name', ''),
-                "target_start_date": r.get('target_start_date', ''),
-                "target_end_date": r.get('target_end_date', ''),
-                "act_start_date": r.get('act_start_date', ''),
-                "act_end_date": r.get('act_end_date', ''),
-                "status": r.get('_analysis', {}).get('status', 'Unknown')
-            })
-            
-        res = {
-            "summary": f"Found {len(records)} activities matching '{search_term}'.",
-            "metrics": {"matched_activities": len(records)},
-            "data": simplified_records,
-            "issues": [],
-            "recommendations": []
-        }
-        self._cache['search_activities_' + search_term] = res
-        return res
-
-    def _get_ai_explanation(self, query: str, data: Dict[str, Any]) -> str:
-        try:
-            prompt = f"""
-            User Query: {query}
-            Structured Analysis: {json.dumps(data, indent=2)}
-            
-            Instructions:
-            1. You are a professional Schedule Analyst (P6 Expert).
-            2. Explain the results concisely using the provided JSON. Use the 'data' field to construct detailed Markdown tables if requested or relevant.
-            3. DO NOT perform any math. Simply interpret the 'metrics', 'data', 'issues', and 'recommendations'.
-            4. Use clear Markdown headings and bullet points.
-            5. ONLY answer what is relevant to the user's specific query. Do not summarize general project health unless it was specifically asked or is the only data provided.
-            """
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "Explain schedule analysis results as an expert analyst. No code. No math."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.2
+            prompt = PASS2_PROMPT.format(
+                query=query,
+                focus=session.get("last_search_term", "none"),
+                context=json.dumps((context or {}).get("applied_filters", ""))
             )
-            return response.choices[0].message.content
+            res = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": "Intent classifier. Return ONLY JSON."},
+                           {"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=60
+            )
+            return json.loads(res.choices[0].message.content)
+        except:
+            return {"type": INTENT_CLARIFY, "term": None}
+
+    # ── Tool Dispatch ─────────────────────────────────────────────────────────
+    def _execute_tool(self, intent: Dict, context: Optional[Dict], session: Dict) -> Dict:
+        t = intent["type"]
+        if t == INTENT_ACTIVITY_SEARCH:
+            return self.search_activities(intent.get("term", ""))
+        if t == INTENT_LIST_DELAYED:
+            return self.get_delayed_activities(limit=20, context=context)
+        if t == INTENT_LIST_CRITICAL:
+            return self.get_critical_path(limit=20, context=context)
+        if t == INTENT_LIST_NEG_FLOAT:
+            return self.get_negative_float_activities(limit=20)
+        if t == INTENT_INTEGRITY:
+            return self.check_integrity()
+        if t == INTENT_HEALTH:
+            return self.get_project_health()
+        if t == INTENT_WBS:
+            return self.get_wbs_summary(intent.get("wbs_id"))
+        if t == INTENT_ANALYTICAL:
+            focus = session.get("focus_id") or (intent.get("term") and
+                    self.search_activities(intent["term"]).get("data", [{}])[0:1])
+            if isinstance(focus, list) and focus:
+                focus = focus[0].get("id") if isinstance(focus[0], dict) else None
+            if focus:
+                return self.analyze_activity_delay(str(focus))
+            return self.get_delayed_activities(limit=10, context=context)
+        # CLARIFY
+        return {"success": False, "clarify": True, "total_count": 0, "data": []}
+
+    # ── LLM Explanation ───────────────────────────────────────────────────────
+    def _explain(self, query: str, intent: Dict, tool: Dict, context: Optional[Dict], session: Dict) -> Dict:
+        if intent["type"] == INTENT_CLARIFY or tool.get("clarify"):
+            hist = [h["q"] for h in session["history"][-2:]]
+            return {
+                "summary": "I couldn't determine what you're asking. Please be more specific.",
+                "metrics": {},
+                "insights": ["Try asking: 'Show delayed activities', 'Critical path tasks', 'Is schedule logic valid', or search by activity name."],
+                "recommendations": hist or ["Rephrase your question with a specific schedule topic."],
+                "template_type": "clarify"
+            }
+
+        history_ctx = [{"role": "user", "content": h["q"]} for h in session["history"][-2:]]
+
+        user_msg = (
+            f'Query: "{query}"\n'
+            f'Intent: {intent["type"]}\n'
+            f'UI Context: {json.dumps(context or {})}\n\n'
+            f'BACKEND DATA (use exclusively):\n{json.dumps(tool, default=str)}'
+        )
+
+        messages = [{"role": "system", "content": EXPLANATION_PROMPT}]
+        messages.extend(history_ctx)
+        messages.append({"role": "user", "content": user_msg})
+
+        try:
+            res = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=0.1,
+                max_tokens=1200,
+                response_format={"type": "json_object"} if self.provider == "openai" else None
+            )
+            raw = res.choices[0].message.content.strip()
+            # Strip markdown fences if local model adds them
+            raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
+            result = json.loads(raw)
         except Exception as e:
-            return f"Analysis complete. Raw JSON: {json.dumps(data, indent=2)}"
+            logger.error(f"LLM explain error: {e}")
+            result = self._fallback_response(tool, intent)
+
+        result = self._sanitize(result)
+        # Attach truncation metadata for frontend
+        if tool.get("is_truncated"):
+            result["is_truncated"] = True
+            result["total_count"] = tool.get("total_count", 0)
+            result["displayed_count"] = tool.get("displayed_count", 0)
+            result["data"] = tool.get("data", [])
+        if tool.get("suggestions"):
+            result["suggestions"] = tool["suggestions"]
+        return result
+
+    @staticmethod
+    def _sanitize(result: Dict) -> Dict:
+        """Ensure metrics/insights/recommendations contain only primitives."""
+        m = result.get("metrics", {})
+        result["metrics"] = {k: (str(v) if isinstance(v, (dict, list)) else v)
+                             for k, v in m.items() if v is not None}
+        result["insights"] = [str(i) for i in result.get("insights", []) if i]
+        result["recommendations"] = [str(r) for r in result.get("recommendations", []) if r]
+        return result
+
+    @staticmethod
+    def _fallback_response(tool: Dict, intent: Dict) -> Dict:
+        total = tool.get("total_count", 0)
+        data = tool.get("data", [])
+        tmpl = "list" if intent["type"].startswith("LIST_") else "health"
+        names = [d.get("name", d.get("task_name", "")) for d in data[:5] if isinstance(d, dict)]
+        summary = f"Found {total} items."
+        if tool.get("is_truncated"):
+            summary = f"Showing {tool.get('displayed_count', len(data))} of {total} activities."
+        if names:
+            summary += f" Top items: {', '.join(names)}."
+        return {"summary": summary, "metrics": {"Total": total},
+                "insights": [summary], "recommendations": [], "template_type": tmpl}
+
+    # ── Main Entry ────────────────────────────────────────────────────────────
+    def analyze(self, query: str, context: Optional[Dict] = None, session_id: str = "default") -> Dict:
+        session = self._get_session(session_id)
+        try:
+            resolved = self._resolve_references(query, session)
+            intent = self._classify_intent(resolved, context, session)
+            logger.info(f"[{session_id}] Intent={intent['type']} query='{query[:60]}'")
+            tool_result = self._execute_tool(intent, context, session)
+            response = self._explain(resolved, intent, tool_result, context, session)
+            self._update_session(session, query, intent, tool_result, response)
+            return response
+        except Exception as e:
+            logger.error(f"Analysis error: {e}", exc_info=True)
+            return {"summary": f"Analysis error: {e}", "metrics": {},
+                    "insights": [], "recommendations": ["Check server logs."],
+                    "template_type": "clarify"}
+
+    # ── Tools ─────────────────────────────────────────────────────────────────
+    def search_activities(self, term: str) -> Dict:
+        if not term: return {"success": False, "total_count": 0, "data": [],
+                              "error": "No search term provided."}
+        source = self.data_store.get_latest()
+        if not source: return {"success": False, "total_count": 0, "data": [],
+                                "error": "No schedule data loaded."}
+        df = source["df"]["tasks"]
+        names = df["task_name"].tolist()
+        codes = df["task_code"].tolist()
+
+        # Strategy 1: exact code match
+        exact_code = df[df["task_code"].str.upper() == term.upper()]
+        # Strategy 2: substring in name
+        sub = df[df["task_name"].str.contains(term, case=False, na=False)]
+        # Strategy 3: fuzzy name match
+        fuzzy_names = difflib.get_close_matches(term, names, n=5, cutoff=0.45)
+        fuzzy_df = df[df["task_name"].isin(fuzzy_names)]
+
+        import pandas as pd
+        combined = pd.concat([exact_code, sub, fuzzy_df]).drop_duplicates("task_id").head(8)
+
+        # Build suggestions for near-misses
+        suggestions = []
+        if combined.empty:
+            suggestions = difflib.get_close_matches(term, names, n=3, cutoff=0.35)
+            return {"success": False, "total_count": 0, "data": [],
+                    "suggestions": suggestions,
+                    "suggestion_text": f"No match for '{term}'. Did you mean: {', '.join(suggestions)}?" if suggestions else f"No activity matching '{term}' found.",
+                    "error": None}
+
+        hpd = source.get("hours_per_day", 8)
+        data = []
+        for _, r in combined.iterrows():
+            float_hrs = float(r.get("float_hrs", r.get("total_float_hr_cnt", 0) or 0))
+            data.append({
+                "id": r["task_id"], "code": r["task_code"], "name": r["task_name"],
+                "status": r.get("status_enum", "Unknown"),
+                "start": str(r.get("target_start_date", ""))[:10],
+                "finish": str(r.get("target_end_date", ""))[:10],
+                "float_days": round(float_hrs / hpd, 1),
+                "is_critical": float_hrs <= 0
+            })
+        return {"success": True, "total_count": len(data), "displayed_count": len(data),
+                "is_truncated": False, "data": data,
+                "stats": {"matched": len(data)}, "error": None,
+                "suggestions": [d["name"] for d in data]}
+
+    def get_delayed_activities(self, limit: int = 20, context: Optional[Dict] = None) -> Dict:
+        analysis = self.data_store.get_deterministic_analysis()
+        acts = analysis.get("activityAnalysis", {})
+        delayed = {tid: a for tid, a in acts.items() if a.get("delay_days", 0) > 0
+                   and a.get("status_enum") != "COMPLETED"}
+        sorted_acts = sorted(delayed.items(), key=lambda x: x[1].get("delay_days", 0), reverse=True)
+        top = sorted_acts[:limit]
+        hpd = self.data_store.get_latest().get("hours_per_day", 8) if self.data_store.get_latest() else 8
+        data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
+                 "delay_days": a.get("delay_days", 0),
+                 "float_days": round(a.get("float_hrs", 0) / hpd, 1),
+                 "category": a.get("delay_float_category",""),
+                 "status": a.get("status_enum",""),
+                 "finish": str(a.get("target_end_date",""))[:10]}
+                for tid, a in top]
+        delays = [a.get("delay_days", 0) for a in delayed.values()]
+        return {"success": True, "total_count": len(delayed), "displayed_count": len(data),
+                "is_truncated": len(delayed) > limit, "data": data,
+                "stats": {"max_delay_days": max(delays) if delays else 0,
+                          "avg_delay_days": round(sum(delays)/len(delays), 1) if delays else 0,
+                          "critical_delayed": sum(1 for a in delayed.values() if a.get("float_hrs",0) <= 0)},
+                "error": None}
+
+    def get_critical_path(self, limit: int = 20, context: Optional[Dict] = None) -> Dict:
+        analysis = self.data_store.get_deterministic_analysis()
+        acts = analysis.get("activityAnalysis", {})
+        critical = {tid: a for tid, a in acts.items() if a.get("is_critical_p6")
+                    and a.get("status_enum") != "COMPLETED"}
+        sorted_acts = sorted(critical.items(), key=lambda x: x[1].get("float_hrs", 0))
+        top = sorted_acts[:limit]
+        hpd = self.data_store.get_latest().get("hours_per_day", 8) if self.data_store.get_latest() else 8
+        data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
+                 "float_days": round(a.get("float_hrs", 0) / hpd, 1),
+                 "delay_days": a.get("delay_days", 0),
+                 "finish": str(a.get("target_end_date",""))[:10]}
+                for tid, a in top]
+        return {"success": True, "total_count": len(critical), "displayed_count": len(data),
+                "is_truncated": len(critical) > limit, "data": data,
+                "stats": {"total_critical": len(critical),
+                          "neg_float_count": sum(1 for a in critical.values() if a.get("float_hrs",0) < 0)},
+                "error": None}
+
+    def get_negative_float_activities(self, limit: int = 20) -> Dict:
+        analysis = self.data_store.get_deterministic_analysis()
+        acts = analysis.get("activityAnalysis", {})
+        hpd = self.data_store.get_latest().get("hours_per_day", 8) if self.data_store.get_latest() else 8
+        neg = {tid: a for tid, a in acts.items()
+               if a.get("float_hrs", 0) < 0 and a.get("status_enum") != "COMPLETED"}
+        sorted_acts = sorted(neg.items(), key=lambda x: x[1].get("float_hrs", 0))
+        top = sorted_acts[:limit]
+        data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
+                 "float_days": round(a.get("float_hrs", 0) / hpd, 1),
+                 "delay_days": a.get("delay_days", 0),
+                 "finish": str(a.get("target_end_date",""))[:10]}
+                for tid, a in top]
+        floats = [a.get("float_hrs", 0) / hpd for a in neg.values()]
+        return {"success": True, "total_count": len(neg), "displayed_count": len(data),
+                "is_truncated": len(neg) > limit, "data": data,
+                "stats": {"worst_float_days": round(min(floats), 1) if floats else 0,
+                          "avg_float_days": round(sum(floats)/len(floats), 1) if floats else 0},
+                "error": None}
+
+    def get_project_health(self) -> Dict:
+        analysis = self.data_store.get_deterministic_analysis()
+        summary = analysis.get("projectSummary", {})
+        health = summary.get("healthMetrics", {})
+        assessment = summary.get("assessment", [])
+        pass_count = sum(1 for a in assessment if a.get("status") is True or a.get("status_text") == "PASS")
+        fail_count = sum(1 for a in assessment if a.get("status") is False or a.get("status_text") == "FAIL")
+        warn_count = len(assessment) - pass_count - fail_count
+        return {"success": True, "total_count": 1, "displayed_count": 1,
+                "is_truncated": False, "data": [],
+                "stats": {"score": health.get("projectHealthScore", 0),
+                          "status": health.get("healthStatus", "Unknown"),
+                          "delay_days": summary.get("projectDelayDays", 0),
+                          "pass_checks": pass_count, "fail_checks": fail_count,
+                          "warning_checks": warn_count,
+                          "issues": health.get("qualityIssues", [])},
+                "error": None, "template_type": "health"}
+
+    def check_integrity(self) -> Dict:
+        analysis = self.data_store.get_deterministic_analysis()
+        assessment = analysis.get("projectSummary", {}).get("assessment", [])
+        logic = next((a for a in assessment if a["id"] == 1), {})
+        leads = next((a for a in assessment if a["id"] == 2), {})
+        lags  = next((a for a in assessment if a["id"] == 3), {})
+        hard  = next((a for a in assessment if a["id"] == 5), {})
+        details = logic.get("details", {})
+        return {"success": True, "total_count": 1, "displayed_count": 1,
+                "is_truncated": False, "data": [],
+                "stats": {
+                    "logic_status": logic.get("status_text", "UNKNOWN"),
+                    "logic_explanation": logic.get("explanation", ""),
+                    "open_start_count": len(details.get("starts", [])),
+                    "open_finish_count": len(details.get("finishes", [])),
+                    "open_start_names": details.get("starts", []),
+                    "open_finish_names": details.get("finishes", []),
+                    "leads_pct": round(float(leads.get("val", 0)), 2),
+                    "lags_pct": round(float(lags.get("val", 0)), 2),
+                    "hard_constraints_pct": round(float(hard.get("val", 0)), 2),
+                    "leads_status": leads.get("status_text") or ("PASS" if leads.get("status") else "FAIL"),
+                    "lags_status": lags.get("status_text") or ("PASS" if lags.get("status") else "FAIL"),
+                },
+                "error": None, "template_type": "integrity"}
+
+    def get_wbs_summary(self, wbs_id: Optional[str] = None) -> Dict:
+        data = self.data_store.get_wbs_summary(target_level=2)
+        return {"success": True, "total_count": len(data), "displayed_count": len(data),
+                "is_truncated": False, "data": data,
+                "stats": {"total_nodes": len(data)}, "error": None}
+
+    def analyze_activity_delay(self, activity_id: str) -> Dict:
+        analysis = self.data_store.get_deterministic_analysis()
+        acts = analysis.get("activityAnalysis", {})
+        act = acts.get(activity_id)
+        if not act:
+            return {"success": False, "total_count": 0, "data": [],
+                    "error": f"Activity ID {activity_id} not found in schedule data."}
+        source = self.data_store.get_latest()
+        hpd = source.get("hours_per_day", 8) if source else 8
+        graph = (source or {}).get("dependency_graph", {})
+        node = graph.get(activity_id, {})
+        return {"success": True, "total_count": 1, "displayed_count": 1,
+                "is_truncated": False,
+                "data": [{
+                    "id": activity_id,
+                    "code": act.get("task_code",""), "name": act.get("task_name",""),
+                    "status": act.get("status_enum",""),
+                    "delay_days": act.get("delay_days", 0),
+                    "float_days": round(act.get("float_hrs", 0) / hpd, 1),
+                    "is_critical": act.get("is_critical_p6", False),
+                    "category": act.get("delay_float_category",""),
+                    "target_start": str(act.get("target_start_date",""))[:10],
+                    "target_finish": str(act.get("target_end_date",""))[:10],
+                    "predecessors": node.get("predecessors", [])[:5],
+                    "successors": node.get("successors", [])[:5],
+                }],
+                "stats": {"delay_days": act.get("delay_days", 0),
+                          "float_days": round(act.get("float_hrs", 0) / hpd, 1),
+                          "predecessor_count": len(node.get("predecessors", [])),
+                          "successor_count": len(node.get("successors", []))},
+                "error": None, "template_type": "activity"}

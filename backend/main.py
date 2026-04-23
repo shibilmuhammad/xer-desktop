@@ -75,9 +75,17 @@ async def get_critical_path():
     return critical.head(100).to_dict('records')
 
 @app.post("/ask")
-async def ask_question(query: str = Form(...)):
+async def ask_question(query: str = Form(...), context: Optional[str] = Form(None), session_id: str = Form("default")):
+    ctx_dict = None
+    if context:
+        try:
+            import json
+            ctx_dict = json.loads(context)
+        except:
+            pass
+            
     # Use the new modular analytical engine
-    response = analyzer.analyze(query)
+    response = analyzer.analyze(query, context=ctx_dict, session_id=session_id)
     return {"response": response}
 
 @app.get("/settings")

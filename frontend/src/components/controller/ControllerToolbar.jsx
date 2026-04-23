@@ -73,6 +73,7 @@ const ControllerToolbar = ({
                 handleUpload={handleUpload}
                 loading={loading}
                 mode="toolbar"
+                showUpdates={true}
              />
           </div>
 
@@ -84,11 +85,11 @@ const ControllerToolbar = ({
                   onChange={(e) => { setSelectedVersionId(e.target.value); setTablePage(1); }}
                   className="bg-transparent border-none outline-none cursor-pointer text-gray-900 pr-1 text-[10px] font-black"
                >
-                  {versions.map(v => (
-                     <option key={v.id} value={v.id}>
-                        {v.type === 'baseline' ? 'Baseline' : `Update (${v.data_date})`}
-                     </option>
-                  ))}
+                   {versions.map(v => (
+                      <option key={v.id} value={v.id}>
+                         {v.type === 'baseline' ? 'Project' : v.data_date}
+                      </option>
+                   ))}
                </select>
              </div>
 

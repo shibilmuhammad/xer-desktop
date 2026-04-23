@@ -307,13 +307,28 @@ function App() {
   const handleAsk = async (submittedQuery) => {
     const q = typeof submittedQuery === 'string' ? submittedQuery : query;
     if (!q || isTyping) return
+
+    // Collect UI Context
+    const context = {
+      current_view: 'audit',
+      selected_version: selectedVersionId,
+      applied_filters: viewerFilter,
+      table_search: tableSearch,
+      has_baseline: baselineLoaded
+    };
+
     const userMsg = { role: 'user', content: q }
     setMessages(prev => [...prev, userMsg])
     setQuery('')
     setIsTyping(true)
     
     try {
-      const res = await axios.post('/api/ask', new URLSearchParams({ query: q }))
+      const params = new URLSearchParams();
+      params.append('query', q);
+      params.append('context', JSON.stringify(context));
+      params.append('session_id', 'audit_chat');
+      
+      const res = await axios.post('/api/ask', params)
       setMessages(prev => [...prev, { role: 'assistant', content: res.data.response }])
     } catch (err) {
       setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error connecting to the schedule analyzer.' }])
@@ -325,14 +340,28 @@ function App() {
   const handleControllerAsk = async (submittedQuery) => {
     const q = typeof submittedQuery === 'string' ? submittedQuery : controllerQuery;
     if (!q || isControllerTyping) return
+
+    // Collect UI Context
+    const context = {
+      current_view: 'controller',
+      selected_version: selectedVersionId,
+      table_mode: viewerTable,
+      applied_filters: viewerFilter,
+      table_search: tableSearch
+    };
+
     const userMsg = { role: 'user', content: q }
     setControllerMessages(prev => [...prev, userMsg])
     setControllerQuery('')
     setIsControllerTyping(true)
     
     try {
-      // Pass a context hint that we are in the Controller/Table view for comparisons
-      const res = await axios.post('/api/ask', new URLSearchParams({ query: q }))
+      const params = new URLSearchParams();
+      params.append('query', q);
+      params.append('context', JSON.stringify(context));
+      params.append('session_id', 'controller_chat');
+
+      const res = await axios.post('/api/ask', params)
       setControllerMessages(prev => [...prev, { role: 'assistant', content: res.data.response }])
     } catch (err) {
       setControllerMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I encountered an error connecting to the controller intelligence engine.' }])
@@ -406,38 +435,7 @@ function App() {
     )
   }
 
-  if (!baselineLoaded) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen text-center p-4 bg-white relative overflow-hidden">
-        {loading && (
-          <div className="absolute inset-0 z-50 bg-white/90 flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in duration-300">
-            <div className="relative">
-              <div className="absolute -inset-4 bg-blue-500/10 rounded-full animate-ping [animation-duration:2s]"></div>
-              <img src={logo} alt="Loading..." className="h-16 relative z-10 animate-pulse" />
-            </div>
-            <p className="mt-8 text-blue-600 font-bold tracking-widest text-xs uppercase animate-pulse">Processing Schedule Data</p>
-          </div>
-        )}
-        
-        <img src={logo} alt="EllisDon Logo" className="h-12 mb-8 object-contain" />
-        <h1 className="text-4xl font-bold mb-2">Welcome, {userName}</h1>
-        <p className="text-gray-500 mb-10">Upload your Primavera P6 baseline XER file to begin analysis</p>
-        
-        <div className="w-full max-w-md p-10 border-2 border-dashed border-gray-200 rounded-2xl bg-white shadow-sm">
-          <h3 className="text-xl font-semibold mb-6">Upload Baseline File</h3>
-          <div className="bg-gray-50 p-8 rounded-xl relative flex flex-col items-center">
-             <Upload size={48} className="text-gray-400 mb-4" />
-             <p className="text-gray-700 font-medium">Drag and drop file here</p>
-             <p className="text-xs text-gray-400 mb-6">Limit 200MB per file • XER</p>
-             <label className="bg-white border border-gray-300 px-6 py-2.5 rounded-lg cursor-pointer text-sm font-medium hover:bg-gray-50 transition-colors shadow-sm">
-               {loading ? 'Uploading...' : 'Browse files'}
-               <input type="file" hidden accept=".xer" onChange={handleUpload} disabled={loading} />
-             </label>
-          </div>
-        </div>
-      </div>
-    )
-  }
+
 
   // P6 Style Date Formatter
   const formatP6Date = (dateStr) => {
@@ -499,6 +497,7 @@ function App() {
               handleUpload={handleUpload}
               loading={loading}
               mode="compact_row"
+              showUpdates={false}
             />
 
             <AuditDashboard stats={stats} />

@@ -1,4 +1,11 @@
 import React from 'react';
+
+// Safely render any value that might be a non-primitive (object/array) from the LLM
+const safeStr = (v) => {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+};
 import { Zap, Minimize2, Maximize2, X, Cpu, Loader2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -81,6 +88,12 @@ const ControllerFloatingChat = ({
                   {m.role === 'assistant' ? (
                       typeof m.content === 'object' && m.content !== null ? (
                         <div className="ai-structured-response flex flex-col gap-4 w-full">
+                          {m.content.is_truncated && (
+                            <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-600 rounded-full w-fit border border-blue-100 shadow-sm mb-1">
+                              <Zap size={10} className="animate-pulse" />
+                              <span className="text-[9px] font-black uppercase tracking-widest">Partial Data: Top {m.content.data?.length} results</span>
+                            </div>
+                          )}
                           <div className="summary text-gray-800 font-medium leading-relaxed markdown-table-content">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content.summary || ''}</ReactMarkdown>
                           </div>
@@ -92,7 +105,7 @@ const ControllerFloatingChat = ({
                                   <div className="text-[10px] text-blue-500 font-black uppercase tracking-widest mb-1">
                                     {k.replace(/([A-Z])/g, ' $1').trim()}
                                   </div>
-                                  <div className="text-xl font-black text-blue-900">{v}</div>
+                                  <div className="text-xl font-black text-blue-900">{safeStr(v)}</div>
                                 </div>
                               ))}
                             </div>
@@ -107,7 +120,7 @@ const ControllerFloatingChat = ({
                                 {(m.content.recommendations || m.content.drivers).map((rec, idx) => (
                                   <div key={idx} className="flex gap-2.5 px-3 py-2.5 bg-amber-50/50 text-amber-800 border border-amber-100/50 rounded-xl text-xs font-semibold shadow-sm leading-relaxed">
                                     <div className="mt-1 shrink-0"><Zap size={10} className="text-amber-500" /></div>
-                                    {rec}
+                                    {safeStr(rec)}
                                   </div>
                                 ))}
                               </div>
