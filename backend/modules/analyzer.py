@@ -91,8 +91,8 @@ class XERAnalyzer:
         self._initialize_client()
         return self.get_config()
 
-    def get_basic_stats(self, version_id: Optional[str] = None) -> Dict:
-        return self.data_store.compute_basic_stats(version_id)
+    def get_basic_stats(self, version_id: Optional[str] = None, context: str = "audit") -> Dict:
+        return self.data_store.compute_basic_stats(version_id, context=context)
 
     # ── Session ───────────────────────────────────────────────────────────────
     def _get_session(self, sid: str) -> Dict:
@@ -154,27 +154,28 @@ class XERAnalyzer:
     # ── Tool Dispatch ─────────────────────────────────────────────────────────
     def _execute_tool(self, intent: Dict, context: Optional[Dict], session: Dict) -> Dict:
         t = intent["type"]
+        ctx = (context or {}).get("current_view", "audit")
         if t == INTENT_ACTIVITY_SEARCH:
-            return self.search_activities(intent.get("term", ""))
+            return self.search_activities(intent.get("term", ""), context=ctx)
         if t == INTENT_LIST_DELAYED:
             return self.get_delayed_activities(limit=20, context=context)
         if t == INTENT_LIST_CRITICAL:
             return self.get_critical_path(limit=20, context=context)
         if t == INTENT_LIST_NEG_FLOAT:
-            return self.get_negative_float_activities(limit=20)
+            return self.get_negative_float_activities(limit=20, context=ctx)
         if t == INTENT_INTEGRITY:
-            return self.check_integrity()
+            return self.check_integrity(context=ctx)
         if t == INTENT_HEALTH:
-            return self.get_project_health()
+            return self.get_project_health(context=ctx)
         if t == INTENT_WBS:
-            return self.get_wbs_summary(intent.get("wbs_id"))
+            return self.get_wbs_summary(intent.get("wbs_id"), context=ctx)
         if t == INTENT_ANALYTICAL:
             focus = session.get("focus_id") or (intent.get("term") and
                     self.search_activities(intent["term"]).get("data", [{}])[0:1])
             if isinstance(focus, list) and focus:
                 focus = focus[0].get("id") if isinstance(focus[0], dict) else None
             if focus:
-                return self.analyze_activity_delay(str(focus))
+                return self.analyze_activity_delay(str(focus), context=ctx)
             return self.get_delayed_activities(limit=10, context=context)
         # CLARIFY
         return {"success": False, "clarify": True, "total_count": 0, "data": []}
@@ -273,10 +274,10 @@ class XERAnalyzer:
                     "template_type": "clarify"}
 
     # ── Tools ─────────────────────────────────────────────────────────────────
-    def search_activities(self, term: str) -> Dict:
+    def search_activities(self, term: str, context: str = "audit") -> Dict:
         if not term: return {"success": False, "total_count": 0, "data": [],
                               "error": "No search term provided."}
-        source = self.data_store.get_latest()
+        source = self.data_store.get_latest(context=context)
         if not source: return {"success": False, "total_count": 0, "data": [],
                                 "error": "No schedule data loaded."}
         df = source["df"]["tasks"]
@@ -321,13 +322,15 @@ class XERAnalyzer:
                 "suggestions": [d["name"] for d in data]}
 
     def get_delayed_activities(self, limit: int = 20, context: Optional[Dict] = None) -> Dict:
-        analysis = self.data_store.get_deterministic_analysis()
+        ctx = (context or {}).get("current_view", "audit") if isinstance(context, dict) else "audit"
+        analysis = self.data_store.get_deterministic_analysis(context=ctx)
         acts = analysis.get("activityAnalysis", {})
         delayed = {tid: a for tid, a in acts.items() if a.get("delay_days", 0) > 0
                    and a.get("status_enum") != "COMPLETED"}
         sorted_acts = sorted(delayed.items(), key=lambda x: x[1].get("delay_days", 0), reverse=True)
         top = sorted_acts[:limit]
-        hpd = self.data_store.get_latest().get("hours_per_day", 8) if self.data_store.get_latest() else 8
+        latest = self.data_store.get_latest(context=ctx)
+        hpd = latest.get("hours_per_day", 8) if latest else 8
         data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
                  "delay_days": a.get("delay_days", 0),
                  "float_days": round(a.get("float_hrs", 0) / hpd, 1),
@@ -344,13 +347,15 @@ class XERAnalyzer:
                 "error": None}
 
     def get_critical_path(self, limit: int = 20, context: Optional[Dict] = None) -> Dict:
-        analysis = self.data_store.get_deterministic_analysis()
+        ctx = (context or {}).get("current_view", "audit") if isinstance(context, dict) else "audit"
+        analysis = self.data_store.get_deterministic_analysis(context=ctx)
         acts = analysis.get("activityAnalysis", {})
         critical = {tid: a for tid, a in acts.items() if a.get("is_critical_p6")
                     and a.get("status_enum") != "COMPLETED"}
         sorted_acts = sorted(critical.items(), key=lambda x: x[1].get("float_hrs", 0))
         top = sorted_acts[:limit]
-        hpd = self.data_store.get_latest().get("hours_per_day", 8) if self.data_store.get_latest() else 8
+        latest = self.data_store.get_latest(context=ctx)
+        hpd = latest.get("hours_per_day", 8) if latest else 8
         data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
                  "float_days": round(a.get("float_hrs", 0) / hpd, 1),
                  "delay_days": a.get("delay_days", 0),
@@ -362,10 +367,11 @@ class XERAnalyzer:
                           "neg_float_count": sum(1 for a in critical.values() if a.get("float_hrs",0) < 0)},
                 "error": None}
 
-    def get_negative_float_activities(self, limit: int = 20) -> Dict:
-        analysis = self.data_store.get_deterministic_analysis()
+    def get_negative_float_activities(self, limit: int = 20, context: str = "audit") -> Dict:
+        analysis = self.data_store.get_deterministic_analysis(context=context)
         acts = analysis.get("activityAnalysis", {})
-        hpd = self.data_store.get_latest().get("hours_per_day", 8) if self.data_store.get_latest() else 8
+        latest = self.data_store.get_latest(context=context)
+        hpd = latest.get("hours_per_day", 8) if latest else 8
         neg = {tid: a for tid, a in acts.items()
                if a.get("float_hrs", 0) < 0 and a.get("status_enum") != "COMPLETED"}
         sorted_acts = sorted(neg.items(), key=lambda x: x[1].get("float_hrs", 0))
@@ -382,8 +388,8 @@ class XERAnalyzer:
                           "avg_float_days": round(sum(floats)/len(floats), 1) if floats else 0},
                 "error": None}
 
-    def get_project_health(self) -> Dict:
-        analysis = self.data_store.get_deterministic_analysis()
+    def get_project_health(self, context: str = "audit") -> Dict:
+        analysis = self.data_store.get_deterministic_analysis(context=context)
         summary = analysis.get("projectSummary", {})
         health = summary.get("healthMetrics", {})
         assessment = summary.get("assessment", [])
@@ -400,8 +406,8 @@ class XERAnalyzer:
                           "issues": health.get("qualityIssues", [])},
                 "error": None, "template_type": "health"}
 
-    def check_integrity(self) -> Dict:
-        analysis = self.data_store.get_deterministic_analysis()
+    def check_integrity(self, context: str = "audit") -> Dict:
+        analysis = self.data_store.get_deterministic_analysis(context=context)
         assessment = analysis.get("projectSummary", {}).get("assessment", [])
         logic = next((a for a in assessment if a["id"] == 1), {})
         leads = next((a for a in assessment if a["id"] == 2), {})
@@ -425,20 +431,20 @@ class XERAnalyzer:
                 },
                 "error": None, "template_type": "integrity"}
 
-    def get_wbs_summary(self, wbs_id: Optional[str] = None) -> Dict:
-        data = self.data_store.get_wbs_summary(target_level=2)
+    def get_wbs_summary(self, wbs_id: Optional[str] = None, context: str = "audit") -> Dict:
+        data = self.data_store.get_wbs_summary(target_level=2, context=context)
         return {"success": True, "total_count": len(data), "displayed_count": len(data),
                 "is_truncated": False, "data": data,
                 "stats": {"total_nodes": len(data)}, "error": None}
 
-    def analyze_activity_delay(self, activity_id: str) -> Dict:
-        analysis = self.data_store.get_deterministic_analysis()
+    def analyze_activity_delay(self, activity_id: str, context: str = "audit") -> Dict:
+        analysis = self.data_store.get_deterministic_analysis(context=context)
         acts = analysis.get("activityAnalysis", {})
         act = acts.get(activity_id)
         if not act:
             return {"success": False, "total_count": 0, "data": [],
                     "error": f"Activity ID {activity_id} not found in schedule data."}
-        source = self.data_store.get_latest()
+        source = self.data_store.get_latest(context=context)
         hpd = source.get("hours_per_day", 8) if source else 8
         graph = (source or {}).get("dependency_graph", {})
         node = graph.get(activity_id, {})

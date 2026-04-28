@@ -30,7 +30,7 @@ def read_root():
     return {"status": "ok"}
 
 @app.post("/upload-xer")
-async def upload_xer(file: UploadFile = File(...), file_type: str = Form("baseline")):
+async def upload_xer(file: UploadFile = File(...), file_type: str = Form("baseline"), context: str = Form("audit")):
     temp_dir = "temp_uploads"
     os.makedirs(temp_dir, exist_ok=True)
     temp_path = os.path.join(temp_dir, file.filename)
@@ -48,11 +48,12 @@ async def upload_xer(file: UploadFile = File(...), file_type: str = Form("baseli
             data, 
             data['project']['project_name'], 
             data['project']['data_date'],
-            type=file_type
+            type=file_type,
+            context=context
         )
         print(f"Version added: {version_id} ({data['project']['project_name']})")
             
-        stats = analyzer.get_basic_stats()
+        stats = analyzer.get_basic_stats(context=context)
         os.remove(temp_path)
         return {"success": True, "stats": stats, "version_id": version_id}
     except Exception as e:
@@ -61,13 +62,13 @@ async def upload_xer(file: UploadFile = File(...), file_type: str = Form("baseli
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
-async def get_health(version_id: Optional[str] = None):
-    return analyzer.get_basic_stats(version_id)
+async def get_health(version_id: Optional[str] = None, context: str = "audit"):
+    return analyzer.get_basic_stats(version_id, context=context)
 
 @app.get("/critical-path")
-async def get_critical_path():
+async def get_critical_path(context: str = "audit"):
     # Example logic: filter tasks with float <= 0
-    latest = analyzer.data_store.get_latest()
+    latest = analyzer.data_store.get_latest(context=context)
     if not latest: return []
     tasks = latest['df']['tasks'].copy()
     tasks['float'] = pd.to_numeric(tasks['total_float_hr_cnt'], errors='coerce').fillna(0)
@@ -97,10 +98,11 @@ async def update_settings(provider: str = Form(...), model: Optional[str] = Form
     return analyzer.set_config(provider, model)
 
 @app.get("/versions")
-async def get_versions():
-    """Returns list of all uploaded schedule versions"""
+async def get_versions(context: str = "audit"):
+    """Returns list of all uploaded schedule versions for a context"""
     versions = []
-    for v in analyzer.data_store.versions.values():
+    ctx = analyzer.data_store.contexts.get(context, analyzer.data_store.contexts["audit"])
+    for v in ctx["versions"].values():
         versions.append({
             "id": v["id"],
             "type": v["type"],
@@ -112,19 +114,19 @@ async def get_versions():
     return versions
 
 @app.delete("/versions/{version_id}")
-async def delete_version(version_id: str):
+async def delete_version(version_id: str, context: str = "audit"):
     """Deletes a specific schedule version"""
     try:
-        analyzer.data_store.remove_version(version_id)
+        analyzer.data_store.remove_version(version_id, context=context)
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/xer-data")
-async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, limit: int = 100, version_id: Optional[str] = None, filter: str = "ALL"):
+async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, limit: int = 100, version_id: Optional[str] = None, filter: str = "ALL", context: str = "audit"):
     offset = (page - 1) * limit
     try:
-        data = analyzer.data_store.get_table_data(table, search, limit, offset, source_id=version_id, filter_type=filter)
+        data = analyzer.data_store.get_table_data(table, search, limit, offset, source_id=version_id, filter_type=filter, context=context)
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

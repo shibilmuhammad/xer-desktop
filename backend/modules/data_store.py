@@ -7,22 +7,31 @@ class XERDataStore:
     """Stores all XER data with pre-computed statistics"""
 
     def __init__(self):
-        self.versions = {} # { id: {type, name, data_date, data, df} }
-        self.active_version_id = None
+        self.contexts = {
+            "audit": {"versions": {}, "active_version_id": None},
+            "controller": {"versions": {}, "active_version_id": None}
+        }
         self.hours_per_day = 10
-        self._cached_stats = None
+        self._cached_stats = {} # {context: stats}
 
-    def add_version(self, data: Dict, name: str, data_date: str, type: str = "update") -> str:
+    def add_version(self, data: Dict, name: str, data_date: str, type: str = "update", context: str = "audit") -> str:
+        if context not in self.contexts:
+            context = "audit"
+            
+        ctx = self.contexts[context]
+        versions = ctx["versions"]
+        
         version_id = f"{type}_{pd.Timestamp.now().strftime('%Y%m%d%H%M%S')}"
         if type == "baseline":
-            version_id = "baseline"
+            version_id = f"baseline_{pd.Timestamp.now().strftime('%Y%m%d%H%M%S')}"
+            # If it's a baseline, we might want to clear previous versions for this context if it's a fresh start?
+            # User didn't specify, so we'll just add it.
             
         # Extract hours_per_day from CALENDAR if available
         hpd = 8.0 # Default
         if 'tables' in data and 'CALENDAR' in data['tables']:
             cal_table = data['tables']['CALENDAR']
             if cal_table:
-                # Get day_hr_cnt from the first calendar entry that has it
                 for cal in cal_table:
                     if 'day_hr_cnt' in cal and cal['day_hr_cnt']:
                         try:
@@ -31,30 +40,33 @@ class XERDataStore:
                         except:
                             continue
         
-        self.versions[version_id] = {
+        versions[version_id] = {
             'id': version_id,
             'type': type,
             'name': name,
             'data_date': data_date,
             'data': data,
             'df': self._create_dataframes(data),
-            'hours_per_day': hpd
+            'hours_per_day': hpd,
+            'context': context
         }
         
         # Trigger CPM Calculation
-        self._run_cpm(version_id)
+        self._run_cpm(version_id, context)
         
         # Build Dependency Graph for AI/UI
-        self._build_dependency_graph(version_id)
+        self._build_dependency_graph(version_id, context)
         
-        self.active_version_id = version_id
-        self._cached_stats = None
+        ctx["active_version_id"] = version_id
+        if context in self._cached_stats:
+            del self._cached_stats[context]
         return version_id
 
-    def _build_dependency_graph(self, version_id: str):
+    def _build_dependency_graph(self, version_id: str, context: str = "audit"):
         """Builds a human-readable dependency map for each activity."""
-        v = self.versions[version_id]
-        if 'tasks' not in v['df'] or 'taskpred' not in v['df']: return
+        ctx = self.contexts.get(context, self.contexts["audit"])
+        v = ctx["versions"].get(version_id)
+        if not v or 'tasks' not in v['df'] or 'taskpred' not in v['df']: return
 
         tasks_df = v['df']['tasks']
         rels_df = v['df']['taskpred']
@@ -85,9 +97,11 @@ class XERDataStore:
                     'lag': lag
                 })
 
-    def _run_cpm(self, version_id: str):
+    def _run_cpm(self, version_id: str, context: str = "audit"):
         """Internal helper to trigger CPM scheduling for a version."""
-        v = self.versions[version_id]
+        ctx = self.contexts.get(context, self.contexts["audit"])
+        v = ctx["versions"].get(version_id)
+        if not v: return
         dfs = v['df']
         if 'tasks' not in dfs or 'taskpred' not in dfs:
             return
@@ -102,12 +116,21 @@ class XERDataStore:
         scheduler = CPMScheduler(hours_per_day=v.get('hours_per_day', 8.0))
         v['df']['tasks'] = scheduler.calculate(dfs['tasks'], dfs['taskpred'], start_date)
 
-    def remove_version(self, version_id: str):
-        if version_id in self.versions:
-            del self.versions[version_id]
-            if self.active_version_id == version_id:
-                self.active_version_id = "baseline" if "baseline" in self.versions else None
-            self._cached_stats = None
+    def remove_version(self, version_id: str, context: str = "audit"):
+        ctx = self.contexts.get(context, self.contexts["audit"])
+        if version_id in ctx["versions"]:
+            del ctx["versions"][version_id]
+            if ctx["active_version_id"] == version_id:
+                # Find another version to make active, preferably a baseline
+                baselines = [v["id"] for v in ctx["versions"].values() if v["type"] == "baseline"]
+                if baselines:
+                    ctx["active_version_id"] = baselines[0]
+                elif ctx["versions"]:
+                    ctx["active_version_id"] = list(ctx["versions"].keys())[0]
+                else:
+                    ctx["active_version_id"] = None
+            if context in self._cached_stats:
+                del self._cached_stats[context]
 
     def _create_dataframes(self, data: Dict) -> Dict[str, pd.DataFrame]:
         dfs = {}
@@ -120,38 +143,52 @@ class XERDataStore:
                 dfs[table_name.lower()] = pd.DataFrame(records)
         return dfs
 
-    def get_version(self, version_id: Optional[str] = None) -> Optional[Dict]:
-        vid = version_id or self.active_version_id
-        return self.versions.get(vid)
+    def get_version(self, version_id: Optional[str] = None, context: str = "audit") -> Optional[Dict]:
+        ctx = self.contexts.get(context, self.contexts["audit"])
+        vid = version_id or ctx["active_version_id"]
+        return ctx["versions"].get(vid)
 
-    def get_latest(self) -> Optional[Dict]:
-        if not self.versions: return None
+    def get_latest(self, context: str = "audit") -> Optional[Dict]:
+        ctx = self.contexts.get(context, self.contexts["audit"])
+        versions = ctx["versions"]
+        if not versions: return None
         # Sort updates by date and get latest
-        updates = [v for v in self.versions.values() if v['type'] == 'update']
+        updates = [v for v in versions.values() if v['type'] == 'update']
         if updates:
             updates.sort(key=lambda x: x['data_date'])
             return updates[-1]
-        return self.versions.get('baseline')
+        # Fallback to baseline
+        baselines = [v for v in versions.values() if v['type'] == 'baseline']
+        if baselines:
+            baselines.sort(key=lambda x: x['data_date'])
+            return baselines[-1]
+        return None
 
-    def get_baseline(self) -> Optional[Dict]:
-        return self.versions.get('baseline')
+    def get_baseline(self, context: str = "audit") -> Optional[Dict]:
+        ctx = self.contexts.get(context, self.contexts["audit"])
+        # Find the first version of type 'baseline'
+        for v in ctx["versions"].values():
+            if v["type"] == "baseline":
+                return v
+        return None
 
-    def get_update_by_month(self, month: str) -> Optional[Dict]:
+    def get_update_by_month(self, month: str, context: str = "audit") -> Optional[Dict]:
         month_map = {
             'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
             'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
         }
         month_num = month_map.get(month.lower()[:3], month)
-        updates = [v for v in self.versions.values() if v['type'] == 'update']
+        ctx = self.contexts.get(context, self.contexts["audit"])
+        updates = [v for v in ctx["versions"].values() if v['type'] == 'update']
         for update in updates:
             if update['data_date'][5:7] == month_num:
                 return update
         return None
 
-    def compute_basic_stats(self, version_id: Optional[str] = None) -> Dict:
-        if not version_id and self._cached_stats: return self._cached_stats
+    def compute_basic_stats(self, version_id: Optional[str] = None, context: str = "audit") -> Dict:
+        if not version_id and context in self._cached_stats: return self._cached_stats[context]
         
-        source = self.get_version(version_id) if version_id else self.get_latest()
+        source = self.get_version(version_id, context=context) if version_id else self.get_latest(context=context)
         if not source or 'tasks' not in source.get('df', {}): return {}
 
         tasks_df = source['df']['tasks'].copy()
@@ -203,7 +240,7 @@ class XERDataStore:
             stats['project_finish'] = str(tasks_df['target_end_date'].dropna().max())[:10]
 
         # Add the new matrix and health metrics
-        analysis = self.get_deterministic_analysis(source['id'])
+        analysis = self.get_deterministic_analysis(source['id'], context=context)
         summary = analysis.get('projectSummary', {})
         delay_matrix = summary.get('delayFloatMatrix', {})
         health_metrics = summary.get('healthMetrics', {})
@@ -219,29 +256,29 @@ class XERDataStore:
         stats['topDrivers'] = summary.get('topDrivers', [])
         stats['topRisks'] = summary.get('topRisks', [])
 
-        self._cached_stats = stats
+        self._cached_stats[context] = stats
         return stats
 
-    def _get_baseline_map(self) -> Dict[str, pd.Timestamp]:
+    def _get_baseline_map(self, context: str = "audit") -> Dict[str, pd.Timestamp]:
         """Helper to get task_code -> target_end_date from baseline"""
-        baseline = self.get_baseline()
+        baseline = self.get_baseline(context=context)
         if not baseline or 'df' not in baseline or 'tasks' not in baseline['df']:
             return {}
         df = baseline['df']['tasks'].copy()
         df['_dt_target_end_date'] = pd.to_datetime(df['target_end_date'], errors='coerce')
         return df.set_index('task_code')['_dt_target_end_date'].to_dict()
 
-    def get_deterministic_analysis(self, version_id: Optional[str] = None) -> Dict:
+    def get_deterministic_analysis(self, version_id: Optional[str] = None, context: str = "audit") -> Dict:
         """
         Pure deterministic schedule analysis based on P6 principles.
         Calculates status, delays (Baseline vs Update), and quality metrics.
         """
-        source = self.get_version(version_id)
+        source = self.get_version(version_id, context=context)
         if not source or 'df' not in source or 'tasks' not in source['df']:
             return {}
 
         df = source['df']['tasks'].copy()
-        baseline_map = self._get_baseline_map()
+        baseline_map = self._get_baseline_map(context=context)
         
         # 1. Normalize & Pre-process
         # Use computed total_float if available, fallback to P6 XER value
@@ -545,22 +582,22 @@ class XERDataStore:
             "activityAnalysis": df[['task_id', 'task_code', 'task_name', 'status_enum', 'delay_days', 'float_hrs', 'delay_float_category', 'is_critical_p6', 'is_predicted_date', '_dt_current_end_date']].set_index('task_id').to_dict('index')
         }
 
-    def calculate_project_delay(self) -> Dict:
+    def calculate_project_delay(self, context: str = "audit") -> Dict:
         """Calculates delay between baseline and latest update"""
-        baseline = self.get_baseline()
-        latest = self.get_latest()
+        baseline = self.get_baseline(context=context)
+        latest = self.get_latest(context=context)
         if not baseline or not latest or baseline['id'] == latest['id']:
             return {"delay_days": 0, "reason": "No baseline or update available for comparison."}
         
         baseline_finish = pd.to_datetime(baseline['data_date'])
-        if 'project_finish' in self.compute_basic_stats():
-            baseline_finish = pd.to_datetime(self.compute_basic_stats()['project_finish'])
+        stats = self.compute_basic_stats(context=context)
+        if 'project_finish' in stats:
+            baseline_finish = pd.to_datetime(stats['project_finish'])
             
-        latest = self.get_latest()
         latest_finish = pd.to_datetime(latest['data_date'])
         
         # Recalculate latest finish if possible
-        latest_stats = self.compute_basic_stats()
+        latest_stats = self.compute_basic_stats(version_id=latest['id'], context=context)
         if 'project_finish' in latest_stats:
             latest_finish = pd.to_datetime(latest_stats['project_finish'])
             
@@ -572,9 +609,9 @@ class XERDataStore:
             "is_delayed": delay > 0
         }
 
-    def get_critical_path_details(self, limit: int = 20) -> List[Dict]:
+    def get_critical_path_details(self, limit: int = 20, context: str = "audit") -> List[Dict]:
         """Returns structured info on the most critical tasks"""
-        source = self.get_latest()
+        source = self.get_latest(context=context)
         if not source or 'tasks' not in source.get('df', {}): return []
         
         df = source['df']['tasks'].copy()
@@ -594,9 +631,9 @@ class XERDataStore:
             })
         return results
 
-    def get_logic_health_details(self) -> Dict:
+    def get_logic_health_details(self, context: str = "audit") -> Dict:
         """Detailed analysis of schedule logic health"""
-        source = self.get_latest()
+        source = self.get_latest(context=context)
         if not source or 'df' not in source: return {}
         
         tasks_df = source['df']['tasks']
@@ -621,9 +658,9 @@ class XERDataStore:
             "dangling_samples": list(tasks_df[tasks_df['task_id'].isin(list(dangling)[:5])]['task_code'])
         }
 
-    def get_float_distribution(self) -> Dict:
+    def get_float_distribution(self, context: str = "audit") -> Dict:
         """Breakdown of float values across the project"""
-        source = self.get_latest()
+        source = self.get_latest(context=context)
         if not source or 'tasks' not in source.get('df', {}): return {}
         
         df = source['df']['tasks'].copy()
@@ -642,9 +679,9 @@ class XERDataStore:
             "high_float_50plus": high
         }
 
-    def get_wbs_summary(self, version_id: Optional[str] = None, target_level: int = 2) -> List[Dict]:
+    def get_wbs_summary(self, version_id: Optional[str] = None, target_level: int = 2, context: str = "audit") -> List[Dict]:
         """Aggregates task data by Discipline (Activity Code) or WBS level (Heuristic Priority)"""
-        source = self.get_version(version_id)
+        source = self.get_version(version_id, context=context)
         if not source or 'df' not in source: return []
         
         tasks_df = source['df'].get('tasks')
@@ -713,7 +750,7 @@ class XERDataStore:
         tasks_copy.loc[is_mile, 'group_name'] = "Project Milestones"
 
         # 4. Get deterministic metrics
-        analysis = self.get_deterministic_analysis(version_id)
+        analysis = self.get_deterministic_analysis(version_id, context=context)
         activity_metrics = analysis.get('activityAnalysis', {})
         
         metrics_list = []
@@ -752,9 +789,9 @@ class XERDataStore:
         # Sort by impact (negative float)
         return sorted(results, key=lambda x: x['avg_float'])
 
-    def get_wbs_hierarchy(self, source_id: Optional[str] = None, search: str = "", filter_type: str = "ALL", include_activities: bool = True) -> Dict:
+    def get_wbs_hierarchy(self, source_id: Optional[str] = None, search: str = "", filter_type: str = "ALL", include_activities: bool = True, context: str = "audit") -> Dict:
         """Constructs a recursive WBS tree and maps filtered activities to their respective nodes."""
-        source = self.get_version(source_id)
+        source = self.get_version(source_id, context=context)
         if not source or 'df' not in source: return {"records": [], "total": 0}
         
         wbs_df = source['df'].get('projwbs')
@@ -772,7 +809,7 @@ class XERDataStore:
                 df = df[mask]
                 
             if filter_type != 'ALL':
-                analysis = self.get_deterministic_analysis(source_id)
+                analysis = self.get_deterministic_analysis(source_id, context=context)
                 metrics = analysis.get('activityAnalysis', {})
                 
                 def check_filter(tid):
@@ -789,7 +826,7 @@ class XERDataStore:
                 df = df[df['task_id'].apply(check_filter)]
                 
             # Inject Analysis
-            analysis_dict = self.get_deterministic_analysis(source_id)
+            analysis_dict = self.get_deterministic_analysis(source_id, context=context)
             activity_metrics = analysis_dict.get('activityAnalysis', {})
             
             hpd = source.get('hours_per_day', 8.0)
@@ -872,7 +909,61 @@ class XERDataStore:
                 
         for root in tree: sort_tree(root)
         
-        analysis = self.get_deterministic_analysis(source_id)
+        # 6. Rollup stats (Dates, Durations, Float)
+        def rollup_stats(node):
+            starts = []
+            finishes = []
+            late_starts = []
+            late_finishes = []
+            min_float = float('inf')
+            
+            # Activity Rollup
+            for act in node.get('activities', []):
+                es = pd.to_datetime(act.get('early_start'), errors='coerce')
+                ef = pd.to_datetime(act.get('early_finish'), errors='coerce')
+                ls = pd.to_datetime(act.get('late_start'), errors='coerce')
+                lf = pd.to_datetime(act.get('late_finish'), errors='coerce')
+                f = pd.to_numeric(act.get('total_float'), errors='coerce')
+                
+                if pd.notnull(es): starts.append(es)
+                if pd.notnull(ef): finishes.append(ef)
+                if pd.notnull(ls): late_starts.append(ls)
+                if pd.notnull(lf): late_finishes.append(lf)
+                if pd.notnull(f): min_float = min(min_float, f)
+            
+            # Children Rollup
+            for child in node.get('children', []):
+                child_stats = rollup_stats(child)
+                if child_stats.get('early_start'): starts.append(pd.to_datetime(child_stats['early_start']))
+                if child_stats.get('early_finish'): finishes.append(pd.to_datetime(child_stats['early_finish']))
+                if child_stats.get('late_start'): late_starts.append(pd.to_datetime(child_stats['late_start']))
+                if child_stats.get('late_finish'): late_finishes.append(pd.to_datetime(child_stats['late_finish']))
+                if child_stats.get('min_float') is not None: min_float = min(min_float, child_stats['min_float'])
+
+            # Calculate Summary
+            s = min(starts) if starts else None
+            f = max(finishes) if finishes else None
+            
+            # Simple duration calculation: span in days (inclusive)
+            dur = 0
+            if s and f:
+                dur = (f - s).days + 1
+
+            
+            node['summary'] = {
+                'early_start': str(s.date()) if s else None,
+                'early_finish': str(f.date()) if f else None,
+                'late_start': str(min(late_starts).date()) if late_starts else None,
+                'late_finish': str(max(late_finishes).date()) if late_finishes else None,
+                'min_float': min_float if min_float != float('inf') else None,
+                'duration_days': dur
+            }
+            return node['summary']
+
+        for root in tree: rollup_stats(root)
+        
+        analysis = self.get_deterministic_analysis(source_id, context=context)
+
         
         return {
             "records": tree,
@@ -881,14 +972,14 @@ class XERDataStore:
             "projectAnalysis": analysis.get('projectSummary', {})
         }
 
-    def get_table_data(self, table_type: str = "TASK", search: str = "", limit: int = 100, offset: int = 0, source_id: Optional[str] = None, filter_type: str = "ALL") -> Dict:
+    def get_table_data(self, table_type: str = "TASK", search: str = "", limit: int = 100, offset: int = 0, source_id: Optional[str] = None, filter_type: str = "ALL", context: str = "audit") -> Dict:
         if table_type == "HIERARCHY":
-            return self.get_wbs_hierarchy(source_id, search, filter_type, include_activities=True)
+            return self.get_wbs_hierarchy(source_id, search, filter_type, include_activities=True, context=context)
         elif table_type == "WBS_HIERARCHY":
-            return self.get_wbs_hierarchy(source_id, search, filter_type, include_activities=False)
+            return self.get_wbs_hierarchy(source_id, search, filter_type, include_activities=False, context=context)
 
         """Fetch and format paginated table data from a specific version ID"""
-        source = self.get_version(source_id)
+        source = self.get_version(source_id, context=context)
         if not source or 'df' not in source: return {"records": [], "total": 0}
         
         # Table mapping
@@ -913,7 +1004,7 @@ class XERDataStore:
             
         # 2. Analytical Filtering (pre-pagination)
         if df_key == 'tasks' and filter_type != 'ALL':
-            analysis = self.get_deterministic_analysis(source_id)
+            analysis = self.get_deterministic_analysis(source_id, context=context)
             metrics = analysis.get('activityAnalysis', {})
             
             def check_filter(tid):
@@ -963,7 +1054,7 @@ class XERDataStore:
         # Inject deterministic analysis if viewing TASK table
         analysis = {}
         if df_key == 'tasks':
-            analysis = self.get_deterministic_analysis(source_id)
+            analysis = self.get_deterministic_analysis(source_id, context=context)
             activity_metrics = analysis.get('activityAnalysis', {})
             
             records = []

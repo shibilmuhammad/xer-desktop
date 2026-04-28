@@ -24,8 +24,10 @@ function App() {
   const [setupError, setSetupError] = useState(null)
   const [isSetupComplete, setIsSetupComplete] = useState(false)
 
-  const [baselineLoaded, setBaselineLoaded] = useState(false)
-  const [stats, setStats] = useState(null)
+  const [auditBaselineLoaded, setAuditBaselineLoaded] = useState(false)
+  const [controllerBaselineLoaded, setControllerBaselineLoaded] = useState(false)
+  const [auditStats, setAuditStats] = useState(null)
+  const [controllerStats, setControllerStats] = useState(null)
   const [loading, setLoading] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
   const [viewMode, setViewMode] = useState('audit') // 'audit' or 'controller'
@@ -36,8 +38,10 @@ function App() {
   const [viewerFilter, setViewerFilter] = useState('ALL') // 'ALL', 'CRITICAL', 'NEG_FLOAT', 'POS_FLOAT', 'DELAYED', 'DELAYED_CRITICAL', 'DELAYED_NEGATIVE'
   const [query, setQuery] = useState('')
   const [messages, setMessages] = useState([])
-  const [versions, setVersions] = useState([])
-  const [selectedVersionId, setSelectedVersionId] = useState('baseline')
+  const [auditVersions, setAuditVersions] = useState([])
+  const [controllerVersions, setControllerVersions] = useState([])
+  const [selectedAuditVersionId, setSelectedAuditVersionId] = useState(null)
+  const [selectedControllerVersionId, setSelectedControllerVersionId] = useState(null)
   const [aiConfig, setAiConfig] = useState({ provider: 'openai', model: 'gpt-4o', has_openai_key: false })
   const [isUpdatingAI, setIsUpdatingAI] = useState(false)
   
@@ -109,15 +113,21 @@ function App() {
     setLoading(true)
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('file_type', type)
-
+    formData.append('context', viewMode)
+    
     try {
       const res = await axios.post('/api/upload-xer', formData)
       if (res.data.success) {
-        setStats(res.data.stats)
-        if (type === 'baseline') setBaselineLoaded(true)
-        setSelectedVersionId(res.data.version_id)
-        fetchVersions()
+        if (viewMode === 'audit') {
+          setAuditStats(res.data.stats)
+          if (type === 'baseline') setAuditBaselineLoaded(true)
+          setSelectedAuditVersionId(res.data.version_id)
+        } else {
+          setControllerStats(res.data.stats)
+          if (type === 'baseline') setControllerBaselineLoaded(true)
+          setSelectedControllerVersionId(res.data.version_id)
+        }
+        fetchVersions(viewMode)
       }
     } catch (err) {
       console.error(err)
@@ -133,17 +143,24 @@ function App() {
       if (viewerTable === 'TASK') reqTable = 'HIERARCHY'
       if (viewerTable === 'WBS') reqTable = 'WBS_HIERARCHY'
       
-      const res = await axios.get(`/api/xer-data?table=${reqTable}&page=${tablePage}&search=${tableSearch}&version_id=${selectedVersionId}&filter=${viewerFilter}`)
+      const selectedId = viewMode === 'audit' ? selectedAuditVersionId : selectedControllerVersionId
+      if (!selectedId) return
+
+      const res = await axios.get(`/api/xer-data?table=${reqTable}&page=${tablePage}&search=${tableSearch}&version_id=${selectedId}&filter=${viewerFilter}&context=${viewMode}`)
       setTableData(res.data)
     } catch (err) {
       console.error('Failed to fetch table data', err)
     }
   }
 
-  const fetchVersions = async () => {
+  const fetchVersions = async (context = viewMode) => {
     try {
-      const res = await axios.get('/api/versions')
-      setVersions(res.data)
+      const res = await axios.get(`/api/versions?context=${context}`)
+      if (context === 'audit') {
+        setAuditVersions(res.data)
+      } else {
+        setControllerVersions(res.data)
+      }
     } catch (err) {
       console.error('Failed to fetch versions', err)
     }
@@ -173,42 +190,54 @@ function App() {
   }
 
   useEffect(() => {
-    const checkExistingData = async () => {
+    const checkExistingData = async (context) => {
       try {
-        const res = await axios.get('/api/versions')
+        const res = await axios.get(`/api/versions?context=${context}`)
         if (res.data && res.data.length > 0) {
-          setVersions(res.data)
-          const hasBaseline = res.data.some(v => v.type === 'baseline')
-          if (hasBaseline) {
-            setBaselineLoaded(true)
+          if (context === 'audit') {
+            setAuditVersions(res.data)
             const bl = res.data.find(v => v.type === 'baseline')
-            setSelectedVersionId(bl.id)
+            if (bl) {
+              setAuditBaselineLoaded(true)
+              setSelectedAuditVersionId(bl.id)
+            }
+          } else {
+            setControllerVersions(res.data)
+            const bl = res.data.find(v => v.type === 'baseline')
+            if (bl) {
+              setControllerBaselineLoaded(true)
+              setSelectedControllerVersionId(bl.id)
+            }
           }
         }
-        fetchAIConfig()
       } catch (err) {
-        console.error('Initialization check failed', err)
+        console.error(`Initialization check failed for ${context}`, err)
       }
     }
     
     if (isSetupComplete) {
-      checkExistingData()
+      checkExistingData('audit')
+      checkExistingData('controller')
+      fetchAIConfig()
     }
   }, [isSetupComplete])
 
   // Sync stats when version changes
   useEffect(() => {
-    const syncStats = async () => {
-      if (!selectedVersionId) return
+    const syncStats = async (context) => {
+      const selectedId = context === 'audit' ? selectedAuditVersionId : selectedControllerVersionId
+      if (!selectedId) return
       try {
-        const res = await axios.get(`/api/health?version_id=${selectedVersionId}`)
-        setStats(res.data)
+        const res = await axios.get(`/api/health?version_id=${selectedId}&context=${context}`)
+        if (context === 'audit') setAuditStats(res.data)
+        else setControllerStats(res.data)
       } catch (err) {
-        console.error('Failed to sync health stats', err)
+        console.error(`Failed to sync health stats for ${context}`, err)
       }
     }
-    syncStats()
-  }, [selectedVersionId])
+    syncStats('audit')
+    syncStats('controller')
+  }, [selectedAuditVersionId, selectedControllerVersionId])
 
   // Setup Effect (IPC Listeners)
   useEffect(() => {
@@ -293,16 +322,22 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (baselineLoaded) {
-      fetchVersions()
+    if (auditBaselineLoaded) {
+      fetchVersions('audit')
     }
-  }, [baselineLoaded])
+  }, [auditBaselineLoaded])
 
   useEffect(() => {
-    if (viewMode === 'controller' && baselineLoaded) {
+    if (controllerBaselineLoaded) {
+      fetchVersions('controller')
+    }
+  }, [controllerBaselineLoaded])
+
+  useEffect(() => {
+    if (viewMode === 'controller' && controllerBaselineLoaded) {
       fetchTableData()
     }
-  }, [viewMode, viewerTable, tablePage, tableSearch, selectedVersionId, viewerFilter])
+  }, [viewMode, viewerTable, tablePage, tableSearch, selectedControllerVersionId, viewerFilter])
 
   const handleAsk = async (submittedQuery) => {
     const q = typeof submittedQuery === 'string' ? submittedQuery : query;
@@ -311,10 +346,10 @@ function App() {
     // Collect UI Context
     const context = {
       current_view: 'audit',
-      selected_version: selectedVersionId,
+      selected_version: selectedAuditVersionId,
       applied_filters: viewerFilter,
       table_search: tableSearch,
-      has_baseline: baselineLoaded
+      has_baseline: auditBaselineLoaded
     };
 
     const userMsg = { role: 'user', content: q }
@@ -344,7 +379,7 @@ function App() {
     // Collect UI Context
     const context = {
       current_view: 'controller',
-      selected_version: selectedVersionId,
+      selected_version: selectedControllerVersionId,
       table_mode: viewerTable,
       applied_filters: viewerFilter,
       table_search: tableSearch
@@ -375,17 +410,32 @@ function App() {
     if (!window.confirm('Are you sure you want to delete this version?')) return
     
     try {
-      await axios.delete(`/api/versions/${versionId}`)
-      if (versionId === 'baseline') {
-        setBaselineLoaded(false)
-        setVersions([])
-        setStats(null)
-        setTableData({ records: [], total: 0 })
-        setMessages([])
+      await axios.delete(`/api/versions/${versionId}?context=${viewMode}`)
+      if (viewMode === 'audit') {
+        if (versionId.startsWith('baseline')) {
+          setAuditBaselineLoaded(false)
+          setAuditVersions([])
+          setAuditStats(null)
+          setMessages([])
+          setSelectedAuditVersionId(null)
+        } else {
+          fetchVersions('audit')
+          if (selectedAuditVersionId === versionId) {
+            setSelectedAuditVersionId(auditVersions.find(v => v.type === 'baseline')?.id || null)
+          }
+        }
       } else {
-        fetchVersions()
-        if (selectedVersionId === versionId) {
-          setSelectedVersionId('baseline')
+        if (versionId.startsWith('baseline')) {
+          setControllerBaselineLoaded(false)
+          setControllerVersions([])
+          setControllerStats(null)
+          setControllerMessages([])
+          setSelectedControllerVersionId(null)
+        } else {
+          fetchVersions('controller')
+          if (selectedControllerVersionId === versionId) {
+            setSelectedControllerVersionId(controllerVersions.find(v => v.type === 'baseline')?.id || null)
+          }
         }
       }
     } catch (err) {
@@ -481,18 +531,22 @@ function App() {
         <div className="h-14 border-b border-gray-100 flex items-center px-6 gap-4 text-sm bg-gray-50/50">
           <div className="h-2 w-2 rounded-full bg-blue-500"></div>
           <span className="font-medium text-gray-600">Project:</span>
-          <span className="font-bold text-gray-900">{stats?.data_source}</span>
+          <span className="font-bold text-gray-900">
+            {viewMode === 'audit' ? auditStats?.data_source : controllerStats?.data_source}
+          </span>
           <span className="text-gray-300">|</span>
           <span className="font-medium text-gray-600">Period:</span>
-          <span className="font-bold text-gray-900">{stats?.project_start} to {stats?.project_finish}</span>
+          <span className="font-bold text-gray-900">
+            {viewMode === 'audit' ? `${auditStats?.project_start} to ${auditStats?.project_finish}` : `${controllerStats?.project_start} to ${controllerStats?.project_finish}`}
+          </span>
         </div>
 
         {viewMode === 'audit' ? (
           <div className="flex-1 overflow-y-auto bg-gray-50/50 relative pb-48">
             <VersionManagerSection 
-              versions={versions}
-              selectedVersionId={selectedVersionId}
-              setSelectedVersionId={setSelectedVersionId}
+              versions={auditVersions}
+              selectedVersionId={selectedAuditVersionId}
+              setSelectedVersionId={setSelectedAuditVersionId}
               handleDeleteVersion={handleDeleteVersion}
               handleUpload={handleUpload}
               loading={loading}
@@ -500,11 +554,11 @@ function App() {
               showUpdates={false}
             />
 
-            <AuditDashboard stats={stats} />
+            <AuditDashboard stats={auditStats} />
             {/* --- AI CHAT SECTION --- */}
             <div className="max-w-6xl mx-auto px-6 py-6 pb-24">
                {/* 14-Point Assessment Table (DCMA Standard) */}
-               <AssessmentTable stats={stats} />
+               <AssessmentTable stats={auditStats} />
                {/* AI Audit Assistant */}
                <AuditAiChat 
                  messages={messages} 
@@ -514,7 +568,7 @@ function App() {
                  isUpdatingAI={isUpdatingAI}
                  handleUpdateAI={handleUpdateAI}
                  aiConfig={aiConfig}
-                 stats={stats}
+                 stats={auditStats}
                />
             </div>
           </div>
@@ -526,9 +580,9 @@ function App() {
               setTablePage={setTablePage}
               viewerFilter={viewerFilter}
               setViewerFilter={setViewerFilter}
-              versions={versions}
-              selectedVersionId={selectedVersionId}
-              setSelectedVersionId={setSelectedVersionId}
+              versions={controllerVersions}
+              selectedVersionId={selectedControllerVersionId}
+              setSelectedVersionId={setSelectedControllerVersionId}
               handleDeleteVersion={handleDeleteVersion}
               handleUpload={handleUpload}
               loading={loading}

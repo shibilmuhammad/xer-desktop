@@ -132,26 +132,50 @@ const WBSTreeNode = React.memo(({ node, level, formatP6Date, defaultExpanded, sh
         style={{ paddingLeft: `${(level * 24) + 16}px` }}
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <div className="flex items-center gap-2 flex-1 truncate">
+        {/* ID Column */}
+        <div className="w-24 shrink-0 flex items-center gap-1.5 overflow-hidden">
           <div className="w-4 h-4 shrink-0 flex items-center justify-center text-gray-400">
             {(hasChildren || hasActivities) ? (
               isExpanded ? <ChevronDown size={14} /> : <ChevronRightIcon size={14} />
             ) : <span className="w-3" />}
           </div>
+          <span className="font-black text-[9px] text-blue-600/70 truncate">{node.wbs_short_name}</span>
+        </div>
+
+        {/* Name Column */}
+        <div className="flex-1 px-2 flex items-center gap-2 truncate">
           <div className="text-blue-600 shrink-0">
              {isExpanded ? <FolderOpen size={16} className="fill-blue-100" /> : <Folder size={16} className="fill-blue-50" />}
           </div>
-          <span className="font-black text-[12px] text-gray-900 tracking-tight">{node.wbs_short_name}</span>
-          <span className="font-medium text-[11px] text-gray-500 truncate ml-1">{node.wbs_name}</span>
+          <span className="font-bold text-[12px] text-gray-900 truncate tracking-tight">{node.wbs_name}</span>
+        </div>
+
+        {/* Status Column (Summary Row usually doesn't have one status, but we can leave space) */}
+        <div className="w-24 shrink-0" />
+
+        {/* Duration Column */}
+        <div className="w-14 shrink-0 px-1 text-[9px] font-black text-gray-700 text-center bg-gray-100/50 rounded-md py-0.5 mx-1">
+          {node.summary?.duration_days ?? 0}d
+        </div>
+
+        {/* Dates & Float */}
+        <div className="w-20 shrink-0 px-1 text-[9px] font-bold text-gray-800 text-center">{formatP6Date(node.summary?.early_start)}</div>
+        <div className="w-20 shrink-0 px-1 text-[9px] font-bold text-gray-800 text-center">{formatP6Date(node.summary?.early_finish)}</div>
+        <div className="w-20 shrink-0 px-1 text-[9px] font-medium text-gray-400 text-center opacity-60">{formatP6Date(node.summary?.late_start)}</div>
+        <div className="w-20 shrink-0 px-1 text-[9px] font-medium text-gray-400 text-center opacity-60">{formatP6Date(node.summary?.late_finish)}</div>
+        <div className={`w-16 shrink-0 px-1 text-[10px] text-right font-black ${(node.summary?.min_float || 0) < 0 ? 'text-red-700' : 'text-gray-500'}`}>
+          {node.summary?.min_float ?? '-'}
         </div>
       </div>
+
       
       {isExpanded && (
         <div className="flex flex-col">
           {hasActivities && (
             <div className="flex flex-col border-b border-gray-200 bg-white" style={{ paddingLeft: `${((level) * 24) + 16 + 28}px` }}>
                <div className="flex items-center py-1.5 px-2 bg-gray-50/80 border-b border-gray-200 text-[8px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-0 shadow-sm">
-                  <div className="w-28 shrink-0 px-1">ID</div>
+                  <div className="w-24 shrink-0 px-1">ID</div>
+
                   <div className="flex-1 px-2">Activity Name</div>
                   <div className="w-24 shrink-0 px-1">Status</div>
                   <div className="w-14 shrink-0 px-1 text-center">Dur</div>
@@ -208,6 +232,18 @@ const ControllerTable = ({
           <div className="flex-1 overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200 relative">
             {isHierarchy ? (
                <div className="flex flex-col min-w-[1200px]">
+                 {/* Global Sticky Header for Hierarchy */}
+                 <div className="flex items-center py-2.5 px-3 bg-gray-50 border-b border-gray-200 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-30 shadow-sm">
+                   <div className="w-24 shrink-0 px-1">ID</div>
+                   <div className="flex-1 px-2">WBS Name / Activity Name</div>
+                   <div className="w-24 shrink-0 px-1 text-center">Status</div>
+                   <div className="w-14 shrink-0 px-1 text-center">Dur</div>
+                   <div className="w-20 shrink-0 px-1 text-center">ES</div>
+                   <div className="w-20 shrink-0 px-1 text-center">EF</div>
+                   <div className="w-20 shrink-0 px-1 text-center">LS</div>
+                   <div className="w-20 shrink-0 px-1 text-center">LF</div>
+                   <div className="w-16 shrink-0 px-1 text-right">Float</div>
+                 </div>
                  {tableData.records.length > 0 ? (
                    tableData.records.map(rootNode => (
                      <WBSTreeNode 
