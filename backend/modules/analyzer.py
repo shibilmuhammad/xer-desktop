@@ -228,6 +228,7 @@ class XERAnalyzer:
             result["total_count"] = tool.get("total_count", 0)
             result["displayed_count"] = tool.get("displayed_count", 0)
             result["data"] = tool.get("data", [])
+            result["data_ref"] = tool.get("data_ref")
         if tool.get("suggestions"):
             result["suggestions"] = tool["suggestions"]
         return result
@@ -305,10 +306,10 @@ class XERAnalyzer:
                     "error": None}
 
         hpd = source.get("hours_per_day", 8)
-        data = []
+        full_data = []
         for _, r in combined.iterrows():
             float_hrs = float(r.get("float_hrs", r.get("total_float_hr_cnt", 0) or 0))
-            data.append({
+            full_data.append({
                 "id": r["task_id"], "code": r["task_code"], "name": r["task_name"],
                 "status": r.get("status_enum", "Unknown"),
                 "start": str(r.get("target_start_date", ""))[:10],
@@ -316,10 +317,13 @@ class XERAnalyzer:
                 "float_days": round(float_hrs / hpd, 1),
                 "is_critical": float_hrs <= 0
             })
-        return {"success": True, "total_count": len(data), "displayed_count": len(data),
-                "is_truncated": False, "data": data,
-                "stats": {"matched": len(data)}, "error": None,
-                "suggestions": [d["name"] for d in data]}
+            
+        data_ref = self.data_store.store_result(full_data)
+        
+        return {"success": True, "total_count": len(full_data), "displayed_count": len(full_data),
+                "is_truncated": False, "data": full_data, "data_ref": data_ref,
+                "stats": {"matched": len(full_data)}, "error": None,
+                "suggestions": [d["name"] for d in full_data]}
 
     def get_delayed_activities(self, limit: int = 20, context: Optional[Dict] = None) -> Dict:
         ctx = (context or {}).get("current_view", "audit") if isinstance(context, dict) else "audit"
@@ -331,16 +335,21 @@ class XERAnalyzer:
         top = sorted_acts[:limit]
         latest = self.data_store.get_latest(context=ctx)
         hpd = latest.get("hours_per_day", 8) if latest else 8
-        data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
-                 "delay_days": a.get("delay_days", 0),
-                 "float_days": round(a.get("float_hrs", 0) / hpd, 1),
-                 "category": a.get("delay_float_category",""),
-                 "status": a.get("status_enum",""),
-                 "finish": str(a.get("target_end_date",""))[:10]}
-                for tid, a in top]
+        
+        full_data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
+                      "delay_days": a.get("delay_days", 0),
+                      "float_days": round(a.get("float_hrs", 0) / hpd, 1),
+                      "category": a.get("delay_float_category",""),
+                      "status": a.get("status_enum",""),
+                      "finish": str(a.get("target_end_date",""))[:10]}
+                     for tid, a in sorted_acts]
+        
+        data_ref = self.data_store.store_result(full_data)
+        preview_data = full_data[:limit]
+        
         delays = [a.get("delay_days", 0) for a in delayed.values()]
-        return {"success": True, "total_count": len(delayed), "displayed_count": len(data),
-                "is_truncated": len(delayed) > limit, "data": data,
+        return {"success": True, "total_count": len(full_data), "displayed_count": len(preview_data),
+                "is_truncated": len(full_data) > limit, "data": preview_data, "data_ref": data_ref,
                 "stats": {"max_delay_days": max(delays) if delays else 0,
                           "avg_delay_days": round(sum(delays)/len(delays), 1) if delays else 0,
                           "critical_delayed": sum(1 for a in delayed.values() if a.get("float_hrs",0) <= 0)},
@@ -356,14 +365,19 @@ class XERAnalyzer:
         top = sorted_acts[:limit]
         latest = self.data_store.get_latest(context=ctx)
         hpd = latest.get("hours_per_day", 8) if latest else 8
-        data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
-                 "float_days": round(a.get("float_hrs", 0) / hpd, 1),
-                 "delay_days": a.get("delay_days", 0),
-                 "finish": str(a.get("target_end_date",""))[:10]}
-                for tid, a in top]
-        return {"success": True, "total_count": len(critical), "displayed_count": len(data),
-                "is_truncated": len(critical) > limit, "data": data,
-                "stats": {"total_critical": len(critical),
+        
+        full_data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
+                      "float_days": round(a.get("float_hrs", 0) / hpd, 1),
+                      "delay_days": a.get("delay_days", 0),
+                      "finish": str(a.get("target_end_date",""))[:10]}
+                     for tid, a in sorted_acts]
+        
+        data_ref = self.data_store.store_result(full_data)
+        preview_data = full_data[:limit]
+        
+        return {"success": True, "total_count": len(full_data), "displayed_count": len(preview_data),
+                "is_truncated": len(full_data) > limit, "data": preview_data, "data_ref": data_ref,
+                "stats": {"total_critical": len(full_data),
                           "neg_float_count": sum(1 for a in critical.values() if a.get("float_hrs",0) < 0)},
                 "error": None}
 
@@ -375,15 +389,19 @@ class XERAnalyzer:
         neg = {tid: a for tid, a in acts.items()
                if a.get("float_hrs", 0) < 0 and a.get("status_enum") != "COMPLETED"}
         sorted_acts = sorted(neg.items(), key=lambda x: x[1].get("float_hrs", 0))
-        top = sorted_acts[:limit]
-        data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
-                 "float_days": round(a.get("float_hrs", 0) / hpd, 1),
-                 "delay_days": a.get("delay_days", 0),
-                 "finish": str(a.get("target_end_date",""))[:10]}
-                for tid, a in top]
+        
+        full_data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
+                      "float_days": round(a.get("float_hrs", 0) / hpd, 1),
+                      "delay_days": a.get("delay_days", 0),
+                      "finish": str(a.get("target_end_date",""))[:10]}
+                     for tid, a in sorted_acts]
+        
+        data_ref = self.data_store.store_result(full_data)
+        preview_data = full_data[:limit]
+        
         floats = [a.get("float_hrs", 0) / hpd for a in neg.values()]
-        return {"success": True, "total_count": len(neg), "displayed_count": len(data),
-                "is_truncated": len(neg) > limit, "data": data,
+        return {"success": True, "total_count": len(full_data), "displayed_count": len(preview_data),
+                "is_truncated": len(full_data) > limit, "data": preview_data, "data_ref": data_ref,
                 "stats": {"worst_float_days": round(min(floats), 1) if floats else 0,
                           "avg_float_days": round(sum(floats)/len(floats), 1) if floats else 0},
                 "error": None}

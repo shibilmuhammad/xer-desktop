@@ -121,6 +121,7 @@ function ListTemplate({ content }) {
         onClose={() => setModalOpen(false)}
         title={content.summary?.split('\n')[0]?.replace(/[#*]/g, '').trim() || 'Activities'}
         data={content.data || []}
+        dataRef={content.data_ref}
         totalCount={content.total_count || 0}
         displayedCount={content.displayed_count || 0}
       />

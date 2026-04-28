@@ -13,6 +13,7 @@ class XERDataStore:
         }
         self.hours_per_day = 10
         self._cached_stats = {} # {context: stats}
+        self.results_cache = {} # {ref_id: List[Dict]}
 
     def add_version(self, data: Dict, name: str, data_date: str, type: str = "update", context: str = "audit") -> str:
         if context not in self.contexts:
@@ -1090,3 +1091,17 @@ class XERDataStore:
             "total": total,
             "table": table_type
         }
+    def store_result(self, data: List[Dict]) -> str:
+        import uuid
+        ref_id = str(uuid.uuid4())
+        self.results_cache[ref_id] = data
+        
+        # Simple cleanup: if cache grows too large, remove oldest
+        if len(self.results_cache) > 50:
+            oldest = list(self.results_cache.keys())[0]
+            del self.results_cache[oldest]
+            
+        return ref_id
+
+    def get_cached_result(self, ref_id: str) -> Optional[List[Dict]]:
+        return self.results_cache.get(ref_id)

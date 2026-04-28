@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
-import { X, Search, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { X, Search, AlertTriangle, CheckCircle, Clock, Loader2 } from 'lucide-react';
+import axios from 'axios';
 
 const STATUS_COLORS = {
   COMPLETED:    'bg-green-100 text-green-700',
@@ -13,18 +14,44 @@ const STATUS_COLORS = {
 
 const PAGE_SIZE = 30;
 
-export default function ViewAllModal({ isOpen, onClose, title, data = [], totalCount, displayedCount }) {
+export default function ViewAllModal({ isOpen, onClose, title, data = [], dataRef, totalCount, displayedCount }) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [fullData, setFullData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (isOpen && dataRef && !fullData && !isLoading) {
+      const fetchFullData = async () => {
+        setIsLoading(true);
+        setError(null);
+        try {
+          const res = await axios.get(`/api/full-data?ref=${dataRef}`);
+          if (res.data.success) {
+            setFullData(res.data.data);
+          }
+        } catch (err) {
+          console.error('Failed to fetch full data', err);
+          setError('Failed to retrieve full dataset. It may have expired.');
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      fetchFullData();
+    }
+  }, [isOpen, dataRef, fullData]);
+
+  const displayData = fullData || data;
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return data;
+    if (!search.trim()) return displayData;
     const q = search.toLowerCase();
-    return data.filter(d =>
+    return displayData.filter(d =>
       (d.name || d.task_name || '').toLowerCase().includes(q) ||
       (d.code || d.task_code || '').toLowerCase().includes(q)
     );
-  }, [data, search]);
+  }, [displayData, search]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -39,11 +66,12 @@ export default function ViewAllModal({ isOpen, onClose, title, data = [], totalC
           <div>
             <h2 className="text-lg font-black text-gray-900">{title}</h2>
             <p className="text-xs text-gray-400 mt-0.5 font-medium">
-              {search ? `${filtered.length} filtered` : `${totalCount} total`}
-              {totalCount > displayedCount && !search &&
+              {search ? `${filtered.length} filtered` : `${fullData ? fullData.length : totalCount} items`}
+              {totalCount > displayedCount && !search && !fullData && !isLoading &&
                 <span className="ml-2 text-amber-500 font-bold">
-                  · Showing {displayedCount} of {totalCount} — search to refine
+                  · Showing preview ({displayedCount})
                 </span>}
+              {isLoading && <span className="ml-2 text-blue-500 animate-pulse font-bold">· Loading full dataset...</span>}
             </p>
           </div>
           <button onClick={onClose}
@@ -66,8 +94,19 @@ export default function ViewAllModal({ isOpen, onClose, title, data = [], totalC
         </div>
 
         {/* Table */}
-        <div className="flex-1 overflow-y-auto">
-          {paginated.length === 0 ? (
+        <div className="flex-1 overflow-y-auto min-h-[300px]">
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center h-64 text-blue-500">
+              <Loader2 size={32} className="mb-3 animate-spin" />
+              <p className="text-sm font-bold uppercase tracking-widest">Retrieving Full Dataset...</p>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center h-64 text-red-500 p-8 text-center">
+              <AlertTriangle size={32} className="mb-3" />
+              <p className="text-sm font-bold uppercase tracking-widest mb-2">Error Loading Data</p>
+              <p className="text-xs text-red-400 font-medium">{error}</p>
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-40 text-gray-400">
               <AlertTriangle size={28} className="mb-3 opacity-40" />
               <p className="text-sm font-medium">No matching activities</p>

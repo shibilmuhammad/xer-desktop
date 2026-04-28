@@ -131,6 +131,15 @@ async def get_xer_data(table: str = "TASK", search: str = "", page: int = 1, lim
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/full-data")
+async def get_full_data(ref: str):
+    """Retrieves full analytical dataset from results cache"""
+    data = analyzer.data_store.get_cached_result(ref)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Result reference not found or expired")
+    return {"success": True, "data": data, "total_count": len(data)}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("API_PORT", 8000))
