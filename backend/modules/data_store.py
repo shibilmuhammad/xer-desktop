@@ -1,7 +1,7 @@
 import pandas as pd
 import re
 from typing import Dict, List, Optional, Any
-from .scheduler import CPMScheduler
+from .scheduler import CPMScheduler, P6Calendar
 
 class XERDataStore:
     """Stores all XER data with pre-computed statistics"""
@@ -107,15 +107,47 @@ class XERDataStore:
         if 'tasks' not in dfs or 'taskpred' not in dfs:
             return
 
-        # Get project start date
-        start_date_str = dfs['tasks']['target_start_date'].dropna().min()
-        if pd.isnull(start_date_str):
+        # Get project start/end from PROJECT table (most reliable source)
+        project_df = dfs.get('project', dfs.get('PROJECT', None))
+        plan_start_raw = None
+        plan_end_raw = None
+        if project_df is not None and not project_df.empty:
+            proj_row = project_df.iloc[0]
+            plan_start_raw = proj_row.get('plan_start_date') or proj_row.get('last_recalc_date')
+            plan_end_raw = proj_row.get('plan_end_date')
+
+        # Fallback: earliest task start date
+        if not plan_start_raw and 'target_start_date' in dfs['tasks'].columns:
+            plan_start_raw = dfs['tasks']['target_start_date'].dropna().min()
+
+        if not plan_start_raw or pd.isnull(pd.to_datetime(plan_start_raw, errors='coerce')):
             start_date = pd.Timestamp.now()
         else:
-            start_date = pd.to_datetime(start_date_str)
+            start_date = pd.to_datetime(str(plan_start_raw)[:10])
+
+        # Contractual end date — drives the backward pass anchor for float calculation
+        plan_end_date = None
+        if plan_end_raw:
+            _ped = pd.to_datetime(str(plan_end_raw)[:10], errors='coerce')
+            if not pd.isnull(_ped):
+                plan_end_date = _ped
+
+        # Get data date for CPM
+        data_date_raw = v.get('data_date')
+        data_date = pd.to_datetime(data_date_raw, errors='coerce') if data_date_raw else None
+
+        # Build calendars DataFrame from CALENDAR table if available
+        calendars_df = dfs.get('calendar', dfs.get('CALENDAR', None))
 
         scheduler = CPMScheduler(hours_per_day=v.get('hours_per_day', 8.0))
-        v['df']['tasks'] = scheduler.calculate(dfs['tasks'], dfs['taskpred'], start_date)
+        v['df']['tasks'] = scheduler.calculate(
+            dfs['tasks'],
+            dfs['taskpred'],
+            start_date,
+            calendars_df=calendars_df,
+            data_date=data_date,
+            plan_end_date=plan_end_date,
+        )
 
     def remove_version(self, version_id: str, context: str = "audit"):
         ctx = self.contexts.get(context, self.contexts["audit"])
@@ -282,14 +314,19 @@ class XERDataStore:
         baseline_map = self._get_baseline_map(context=context)
         
         # 1. Normalize & Pre-process
-        # Use computed total_float if available, fallback to P6 XER value
+        # Priority: CPM-computed 'total_float' (days) > XER stored 'total_float_hr_cnt' (hours)
         hpd = source.get('hours_per_day', 8.0)
-        if 'total_float' in df.columns:
+        if 'total_float' in df.columns and df['total_float'].notna().any():
+            # CPM output: already in days
             df['float_days'] = pd.to_numeric(df['total_float'], errors='coerce').fillna(0)
             df['float_hrs'] = df['float_days'] * hpd
-        else:
-            df['float_hrs'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0) if 'total_float_hr_cnt' in df.columns else 0
+        elif 'total_float_hr_cnt' in df.columns:
+            # XER stored value: in hours
+            df['float_hrs'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0)
             df['float_days'] = df['float_hrs'] / hpd
+        else:
+            df['float_hrs'] = 0.0
+            df['float_days'] = 0.0
         
         date_cols = ['target_start_date', 'target_end_date', 'act_start_date', 'act_end_date']
         for col in date_cols:
@@ -800,6 +837,16 @@ class XERDataStore:
         
         if wbs_df is None: return {"records": [], "total": 0}
         
+        # Load Project Default Calendar for WBS duration rollups
+        proj_cal = P6Calendar()
+        project_df = source['df'].get('project', source['df'].get('PROJECT'))
+        calendars_df = source['df'].get('calendar', source['df'].get('CALENDAR'))
+        if project_df is not None and not project_df.empty and calendars_df is not None and not calendars_df.empty:
+            proj_clndr_id = str(project_df.iloc[0].get('clndr_id', ''))
+            cal_row = calendars_df[calendars_df['clndr_id'].astype(str) == proj_clndr_id]
+            if not cal_row.empty:
+                proj_cal = P6Calendar(cal_row.iloc[0].to_dict())
+        
         # 1. Process and Filter Tasks (similar to get_table_data)
         tasks = []
         if tasks_df is not None and include_activities:
@@ -918,13 +965,14 @@ class XERDataStore:
             late_finishes = []
             min_float = float('inf')
             
-            # Activity Rollup
+            # Activity Rollup — read from _analysis dict (populated after CPM)
             for act in node.get('activities', []):
-                es = pd.to_datetime(act.get('early_start'), errors='coerce')
-                ef = pd.to_datetime(act.get('early_finish'), errors='coerce')
-                ls = pd.to_datetime(act.get('late_start'), errors='coerce')
-                lf = pd.to_datetime(act.get('late_finish'), errors='coerce')
-                f = pd.to_numeric(act.get('total_float'), errors='coerce')
+                analysis_data = act.get('_analysis', {})
+                es = pd.to_datetime(analysis_data.get('early_start'), errors='coerce')
+                ef = pd.to_datetime(analysis_data.get('early_finish'), errors='coerce')
+                ls = pd.to_datetime(analysis_data.get('late_start'), errors='coerce')
+                lf = pd.to_datetime(analysis_data.get('late_finish'), errors='coerce')
+                f = pd.to_numeric(analysis_data.get('total_float'), errors='coerce')
                 
                 if pd.notnull(es): starts.append(es)
                 if pd.notnull(ef): finishes.append(ef)
@@ -944,11 +992,11 @@ class XERDataStore:
             # Calculate Summary
             s = min(starts) if starts else None
             f = max(finishes) if finishes else None
-            
-            # Simple duration calculation: span in days (inclusive)
+
+            # Duration in WORKING days, matching P6's WBS summary display using the Project Calendar.
             dur = 0
-            if s and f:
-                dur = (f - s).days + 1
+            if s and f and f > s:
+                dur = proj_cal.workdays_between(s, f)
 
             
             node['summary'] = {

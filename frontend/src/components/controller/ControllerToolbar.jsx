@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, ListTree, Link as LinkIcon, Info, Search, X, Zap, CheckCircle, Loader2, AlertTriangle } from 'lucide-react';
+import { Activity, ListTree, Link as LinkIcon, Info, Search, X, Zap, CheckCircle, Loader2, AlertTriangle, Users } from 'lucide-react';
 import VersionManagerSection from '../VersionManagerSection';
 
 const ControllerToolbar = ({
@@ -30,7 +30,8 @@ const ControllerToolbar = ({
               { id: 'TASK', label: 'Activities', icon: <Activity size={14} /> },
               { id: 'WBS', label: 'WBS', icon: <ListTree size={14} /> },
               { id: 'RELATIONSHIPS', label: 'Relationships', icon: <LinkIcon size={14} /> },
-              { id: 'PROJECT', label: 'Project Info', icon: <Info size={14} /> }
+              { id: 'PROJECT', label: 'Project Info', icon: <Info size={14} /> },
+              { id: 'RESOURCES', label: 'Resources', icon: <Users size={14} /> }
             ].map(t => (
               <button 
                 key={t.id}
@@ -81,7 +82,7 @@ const ControllerToolbar = ({
              <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-100 rounded-xl text-[10px] font-black text-gray-600">
                <span className="text-gray-400">VIEW:</span>
                <select 
-                  value={selectedVersionId}
+                  value={selectedVersionId ?? ''}
                   onChange={(e) => { setSelectedVersionId(e.target.value); setTablePage(1); }}
                   className="bg-transparent border-none outline-none cursor-pointer text-gray-900 pr-1 text-[10px] font-black"
                >

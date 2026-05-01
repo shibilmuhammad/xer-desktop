@@ -140,6 +140,39 @@ async def get_full_data(ref: str):
     return {"success": True, "data": data, "total_count": len(data)}
 
 
+
+# ── Resource Endpoints ────────────────────────────────────────────────────────
+@app.get("/resources/summary")
+async def get_resources_summary(context: str = "audit"):
+    """Returns total, assigned, and unassigned resource counts."""
+    from modules.resource_engine import ResourceEngine
+    engine = ResourceEngine(analyzer.data_store)
+    result = engine.get_resource_summary(context=context)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "No data"))
+    return result["stats"]
+
+@app.get("/resources/assignments")
+async def get_resources_assignments(context: str = "audit", limit: int = 500):
+    """Returns resource-to-activity assignments."""
+    from modules.resource_engine import ResourceEngine
+    engine = ResourceEngine(analyzer.data_store)
+    result = engine.get_resource_assignments(limit=limit, context=context)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "No data"))
+    return result
+
+@app.get("/resources/load")
+async def get_resources_load(context: str = "audit"):
+    """Returns time-phased resource load data."""
+    from modules.resource_engine import ResourceEngine
+    engine = ResourceEngine(analyzer.data_store)
+    result = engine.get_resource_load(context=context)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail=result.get("error", "No data"))
+    return result
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("API_PORT", 8000))

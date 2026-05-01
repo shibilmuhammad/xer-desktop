@@ -11,6 +11,28 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import OptimizedChatInput from '../OptimizedChatInput';
 
+const RESPONSE_LABELS = {
+  get_project_summary: "Project Summary",
+  get_project_metrics: "Project Summary",
+  get_critical_path: "Critical Path Analysis",
+  get_critical_activities: "Critical Path Analysis",
+  get_delayed_activities: "Delayed Activities",
+  get_negative_float_activities: "Negative Float Analysis",
+  check_integrity: "Logic Integrity Check",
+  check_open_ends: "Open Ends Analysis",
+  check_open_ended_tasks: "Open Ends Analysis",
+  check_constraints: "Constraints Analysis",
+  check_circular_dependencies: "Circular Dependencies",
+  check_path_continuity: "Path Continuity",
+  check_critical_path_continuity: "Path Continuity",
+  get_project_health: "Project Health Assessment",
+  get_wbs_summary: "WBS Summary",
+  analyze_activity_delay: "Activity Delay Analysis",
+  get_activity_details: "Activity Details",
+  capability_gap: "Feature Not Available",
+  clarify: "System Request"
+};
+
 const ControllerFloatingChat = ({
   controllerChatPos,
   isDragging,
@@ -97,6 +119,36 @@ const ControllerFloatingChat = ({
                           <div className="summary text-gray-800 font-medium leading-relaxed markdown-table-content">
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content.summary || ''}</ReactMarkdown>
                           </div>
+                          
+                          {/* Render Display Items directly */}
+                          {m.content.display_items && m.content.display_items.length > 0 && (
+                            <div className="mt-2 space-y-2">
+                              {m.content.display_items.map((item, idx) => {
+                                const label = m.content.display_title || RESPONSE_LABELS[m.content.type] || item.name || item.task_name || item.discipline || null;
+                                return (
+                                  <div key={idx} className="p-3 bg-white border border-gray-100 rounded-xl shadow-sm text-xs flex flex-col gap-1">
+                                    {label && (
+                                      <div className="flex justify-between items-start mb-1">
+                                        <span className="font-bold text-gray-800 break-words pr-2">{label}</span>
+                                        {item.id && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded flex-shrink-0 font-mono">{item.code || item.id}</span>}
+                                      </div>
+                                    )}
+                                  <div className="flex flex-wrap gap-2 text-[10px] mt-1 font-medium text-gray-500">
+                                    {Object.entries(item).map(([k, v]) => {
+                                      if (['id', 'code', 'name', 'task_name', 'discipline'].includes(k)) return null;
+                                      if (v === null || v === undefined || typeof v === 'object') return null;
+                                      return (
+                                        <span key={k} className="bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-md">
+                                          <span className="capitalize text-gray-400 mr-1">{k.replace(/_/g, ' ')}:</span>
+                                          <span className="text-gray-700">{String(v)}</span>
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )})}
+                            </div>
+                          )}
                           
                           {m.content.metrics && Object.keys(m.content.metrics).length > 0 && (
                             <div className="grid grid-cols-2 gap-3 mt-1">

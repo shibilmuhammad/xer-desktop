@@ -12,22 +12,48 @@ const safeStr = (v) => {
 };
 
 const StatusBadge = ({ status }) => {
-  const s = (status || '').toUpperCase();
+  if (!status) return null;
+  const s = String(status).toUpperCase();
   const cfg = {
-    PASS:    { cls: 'bg-green-100 text-green-700 border-green-200',    icon: <CheckCircle size={11} /> },
-    WARNING: { cls: 'bg-amber-100 text-amber-700 border-amber-200',    icon: <AlertTriangle size={11} /> },
-    FAIL:    { cls: 'bg-red-100 text-red-700 border-red-200',          icon: <XCircle size={11} /> },
-    DEFAULT: { cls: 'bg-gray-100 text-gray-600 border-gray-200',       icon: null },
+    PASS:    { cls: 'bg-green-100 text-green-700 border-green-200',    icon: <CheckCircle size={11} />, label: 'OK' },
+    SUCCESS: { cls: 'bg-green-100 text-green-700 border-green-200',    icon: <CheckCircle size={11} />, label: 'OK' },
+    WARNING: { cls: 'bg-amber-100 text-amber-700 border-amber-200',    icon: <AlertTriangle size={11} />, label: 'WARNING' },
+    FAIL:    { cls: 'bg-red-100 text-red-700 border-red-200',          icon: <XCircle size={11} />, label: 'ERROR' },
+    ERROR:   { cls: 'bg-red-100 text-red-700 border-red-200',          icon: <XCircle size={11} />, label: 'ERROR' },
   };
-  const { cls, icon } = cfg[s] || cfg.DEFAULT;
+  const badge = cfg[s];
+  if (!badge) return null;
+  
   return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${cls}`}>
-      {icon}{s || 'UNKNOWN'}
+    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${badge.cls}`}>
+      {badge.icon}{badge.label}
     </span>
   );
 };
 
 // ── Template Renderers ────────────────────────────────────────────────────────
+
+const RESPONSE_LABELS = {
+  get_project_summary: "Project Summary",
+  get_project_metrics: "Project Summary",
+  get_critical_path: "Critical Path Analysis",
+  get_critical_activities: "Critical Path Analysis",
+  get_delayed_activities: "Delayed Activities",
+  get_negative_float_activities: "Negative Float Analysis",
+  check_integrity: "Logic Integrity Check",
+  check_open_ends: "Open Ends Analysis",
+  check_open_ended_tasks: "Open Ends Analysis",
+  check_constraints: "Constraints Analysis",
+  check_circular_dependencies: "Circular Dependencies",
+  check_path_continuity: "Path Continuity",
+  check_critical_path_continuity: "Path Continuity",
+  get_project_health: "Project Health Assessment",
+  get_wbs_summary: "WBS Summary",
+  analyze_activity_delay: "Activity Delay Analysis",
+  get_activity_details: "Activity Details",
+  capability_gap: "Feature Not Available",
+  clarify: "System Request"
+};
 
 function ListTemplate({ content }) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -58,6 +84,36 @@ function ListTemplate({ content }) {
       <div className="text-sm text-gray-800 font-medium leading-relaxed markdown-table-content">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.summary || ''}</ReactMarkdown>
       </div>
+
+      {/* Render Display Items in Chat directly */}
+      {content.display_items && content.display_items.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {content.display_items.map((item, idx) => {
+            const label = content.display_title || RESPONSE_LABELS[content.type] || item.name || item.task_name || item.discipline || null;
+            return (
+              <div key={idx} className="p-3 bg-white border border-gray-100 rounded-xl shadow-sm text-xs flex flex-col gap-1">
+                {label && (
+                  <div className="flex justify-between items-start mb-1">
+                    <span className="font-bold text-gray-800 break-words pr-2">{label}</span>
+                    {item.id && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded flex-shrink-0 font-mono">{item.code || item.id}</span>}
+                  </div>
+                )}
+              <div className="flex flex-wrap gap-2 text-[10px] mt-1 font-medium text-gray-500">
+                {Object.entries(item).map(([k, v]) => {
+                  if (['id', 'code', 'name', 'task_name', 'discipline'].includes(k)) return null;
+                  if (v === null || v === undefined || typeof v === 'object') return null;
+                  return (
+                    <span key={k} className="bg-gray-50 border border-gray-100 px-2 py-0.5 rounded-md">
+                      <span className="capitalize text-gray-400 mr-1">{k.replace(/_/g, ' ')}:</span>
+                      <span className="text-gray-700">{String(v)}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )})}
+        </div>
+      )}
 
       {/* Metrics Grid */}
       {Object.keys(metrics).length > 0 && (
@@ -120,7 +176,7 @@ function ListTemplate({ content }) {
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         title={content.summary?.split('\n')[0]?.replace(/[#*]/g, '').trim() || 'Activities'}
-        data={content.data || []}
+        data={content.all_items || []}
         dataRef={content.data_ref}
         totalCount={content.total_count || 0}
         displayedCount={content.displayed_count || 0}
@@ -132,7 +188,7 @@ function ListTemplate({ content }) {
 function IntegrityTemplate({ content }) {
   const stats = (content.data || [])[0] || {};
   const summary_stats = content.stats || {};
-  const logicStatus = summary_stats.logic_status || stats.logic_status || 'UNKNOWN';
+  const logicStatus = content.status || summary_stats.logic_status || stats.logic_status;
   const openStarts = summary_stats.open_start_names || [];
   const openFinishes = summary_stats.open_finish_names || [];
   const insights = content.insights || [];
@@ -231,6 +287,35 @@ function ClarifyTemplate({ content }) {
   );
 }
 
+function KnowledgeTemplate({ content }) {
+  const insights = content.insights || [];
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="text-sm text-gray-800 font-medium leading-relaxed markdown-table-content">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.summary || ''}</ReactMarkdown>
+      </div>
+      {insights.length > 0 && (
+        <div className="space-y-2 mt-2">
+          {insights.map((ins, i) => (
+            <div key={i} className="flex gap-2.5 text-sm text-gray-600 italic border-l-2 border-blue-100 pl-4">
+              <span>{safeStr(ins)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {(content.recommendations || []).length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-2">
+          {content.recommendations.map((r, i) => (
+            <div key={i} className="px-3 py-1 bg-gray-50 border border-gray-200 text-[10px] font-black uppercase tracking-widest text-gray-400 rounded-lg">
+              {safeStr(r)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DefaultTemplate({ content }) {
   return <ListTemplate content={content} />;
 }
@@ -250,6 +335,7 @@ export default function ChatMessage({ content }) {
 
   if (tmpl === 'integrity') return <IntegrityTemplate content={content} />;
   if (tmpl === 'clarify')   return <ClarifyTemplate content={content} />;
+  if (tmpl === 'knowledge') return <KnowledgeTemplate content={content} />;
   // list, activity, analysis, health all use the rich list template
   return <ListTemplate content={content} />;
 }

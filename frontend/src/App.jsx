@@ -14,6 +14,7 @@ import AuditAiChat from './components/audit/AuditAiChat'
 import ControllerToolbar from './components/controller/ControllerToolbar'
 import ControllerTable from './components/controller/ControllerTable'
 import ControllerFloatingChat from './components/controller/ControllerFloatingChat'
+import ResourceView from './components/controller/ResourceView'
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -343,6 +344,15 @@ function App() {
     const q = typeof submittedQuery === 'string' ? submittedQuery : query;
     if (!q || isTyping) return
 
+    if (!auditBaselineLoaded) {
+      setMessages(prev => [...prev, 
+        { role: 'user', content: q }, 
+        { role: 'assistant', content: "Please upload a project XER file to begin the analysis." }
+      ])
+      setQuery('')
+      return
+    }
+
     // Collect UI Context
     const context = {
       current_view: 'audit',
@@ -375,6 +385,15 @@ function App() {
   const handleControllerAsk = async (submittedQuery) => {
     const q = typeof submittedQuery === 'string' ? submittedQuery : controllerQuery;
     if (!q || isControllerTyping) return
+
+    if (!controllerBaselineLoaded) {
+      setControllerMessages(prev => [...prev, 
+        { role: 'user', content: q }, 
+        { role: 'assistant', content: "Please upload a project XER file to query the database." }
+      ])
+      setControllerQuery('')
+      return
+    }
 
     // Collect UI Context
     const context = {
@@ -527,7 +546,16 @@ function App() {
       />
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col bg-white overflow-hidden">
+      <div className="flex-1 flex flex-col bg-white overflow-hidden relative">
+        {/* Global Loading Overlay */}
+        {loading && (
+          <div className="absolute inset-0 z-[100] bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center">
+            <Loader2 size={48} className="text-blue-600 animate-spin mb-4" />
+            <h2 className="text-2xl font-bold text-gray-800 tracking-tight">Processing Schedule File...</h2>
+            <p className="text-gray-500 mt-2 font-medium">Parsing data and computing logic networks.</p>
+          </div>
+        )}
+
         <div className="h-14 border-b border-gray-100 flex items-center px-6 gap-4 text-sm bg-gray-50/50">
           <div className="h-2 w-2 rounded-full bg-blue-500"></div>
           <span className="font-medium text-gray-600">Project:</span>
@@ -573,7 +601,7 @@ function App() {
             </div>
           </div>
         ) : viewMode === 'controller' ? (
-          <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-gray-50/50">
             <ControllerToolbar 
               viewerTable={viewerTable}
               setViewerTable={setViewerTable}
@@ -592,18 +620,23 @@ function App() {
               setIsControllerChatOpen={setIsControllerChatOpen}
               tableData={tableData}
             />
-            <ControllerTable 
-              tableData={tableData}
-              viewerTable={viewerTable}
-              viewerFilter={viewerFilter}
-              setViewerFilter={setViewerFilter}
-              tableSearch={tableSearch}
-              setTableSearch={setTableSearch}
-              tablePage={tablePage}
-              setTablePage={setTablePage}
-              formatP6Date={formatP6Date}
-              getHeaderLabel={getHeaderLabel}
-            />
+            {viewerTable === 'RESOURCES' ? (
+              <ResourceView context="controller" />
+            ) : (
+              <ControllerTable 
+                tableData={tableData}
+                viewerTable={viewerTable}
+                viewerFilter={viewerFilter}
+                setViewerFilter={setViewerFilter}
+                tableSearch={tableSearch}
+                setTableSearch={setTableSearch}
+                tablePage={tablePage}
+                setTablePage={setTablePage}
+                formatP6Date={formatP6Date}
+                getHeaderLabel={getHeaderLabel}
+                hasProject={controllerBaselineLoaded}
+              />
+            )}
             
             {/* Controller Intelligence - Independent Floating Chat */}
             <ControllerFloatingChat 

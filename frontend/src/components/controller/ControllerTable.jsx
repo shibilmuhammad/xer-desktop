@@ -20,10 +20,11 @@ const TaskRow = React.memo(({ task, formatP6Date }) => {
     statusConfig = { label: 'Delayed', color: 'bg-orange-100 text-orange-700 border border-orange-200', icon: <AlertTriangle size={12} /> };
   }
 
-  const rowClass = 'flex items-center hover:bg-blue-50/40 transition-colors group border-b border-gray-50 py-1 px-2 cursor-pointer';
-  if (category === 'DELAYED_NEGATIVE' || isNegativeFloat) rowClass += ' bg-red-50 border-l-4 border-l-red-900';
-  else if (category === 'DELAYED_CRITICAL') rowClass += ' bg-red-50/50';
-  else if (isDelayed) rowClass += ' bg-orange-50/30';
+  const rowClass = `flex items-center hover:bg-blue-50/40 transition-colors group border-b border-gray-50 py-1 px-2 cursor-pointer${
+    (category === 'DELAYED_NEGATIVE' || isNegativeFloat) ? ' bg-red-50 border-l-4 border-l-red-900' :
+    category === 'DELAYED_CRITICAL' ? ' bg-red-50/50' :
+    isDelayed ? ' bg-orange-50/30' : ''
+  }`;
 
   return (
     <div className="flex flex-col">
@@ -44,7 +45,7 @@ const TaskRow = React.memo(({ task, formatP6Date }) => {
         <div className="w-20 shrink-0 px-1 text-[9px] font-medium text-gray-400 text-center">{formatP6Date(analysis.late_start)}</div>
         <div className="w-20 shrink-0 px-1 text-[9px] font-medium text-gray-400 text-center">{formatP6Date(analysis.late_finish)}</div>
         <div className={`w-16 shrink-0 px-1 text-[10px] text-right font-black ${isNegativeFloat ? 'text-red-700' : isCritical ? 'text-red-600' : 'text-gray-500'}`}>
-          {analysis.total_float ?? '-'}
+          {analysis.total_float != null ? Number(analysis.total_float).toFixed(2) : '-'}
         </div>
       </div>
       
@@ -164,7 +165,7 @@ const WBSTreeNode = React.memo(({ node, level, formatP6Date, defaultExpanded, sh
         <div className="w-20 shrink-0 px-1 text-[9px] font-medium text-gray-400 text-center opacity-60">{formatP6Date(node.summary?.late_start)}</div>
         <div className="w-20 shrink-0 px-1 text-[9px] font-medium text-gray-400 text-center opacity-60">{formatP6Date(node.summary?.late_finish)}</div>
         <div className={`w-16 shrink-0 px-1 text-[10px] text-right font-black ${(node.summary?.min_float || 0) < 0 ? 'text-red-700' : 'text-gray-500'}`}>
-          {node.summary?.min_float ?? '-'}
+          {node.summary?.min_float != null ? Number(node.summary.min_float).toFixed(2) : '-'}
         </div>
       </div>
 
@@ -208,17 +209,18 @@ const WBSTreeNode = React.memo(({ node, level, formatP6Date, defaultExpanded, sh
   );
 });
 
-const ControllerTable = ({
-  tableData,
-  viewerTable,
-  viewerFilter,
-  setViewerFilter,
-  tableSearch,
-  setTableSearch,
-  tablePage,
-  setTablePage,
-  formatP6Date,
-  getHeaderLabel
+const ControllerTable = ({ 
+  tableData, 
+  viewerTable, 
+  viewerFilter, 
+  setViewerFilter, 
+  tableSearch, 
+  setTableSearch, 
+  tablePage, 
+  setTablePage, 
+  formatP6Date, 
+  getHeaderLabel,
+  hasProject
 }) => {
   const isHierarchy = tableData.table === 'HIERARCHY';
   const showActivities = viewerTable === 'TASK';
@@ -330,9 +332,18 @@ const ControllerTable = ({
                     <tr>
                       <td colSpan="100" className="px-6 py-32 text-center">
                         <div className="flex flex-col items-center gap-3 text-gray-400">
-                          <Search size={48} className="opacity-20 mb-2" />
-                          <p className="text-sm font-medium italic">No schedule data found for this specific criteria</p>
-                          <button onClick={() => {setTableSearch(''); setViewerFilter('ALL');}} className="text-xs text-blue-600 font-bold hover:underline">Reset filters</button>
+                          {hasProject ? (
+                            <>
+                              <Search size={48} className="opacity-20 mb-2" />
+                              <p className="text-sm font-medium italic">No schedule data found for this specific criteria</p>
+                              <button onClick={() => {setTableSearch(''); setViewerFilter('ALL');}} className="text-xs text-blue-600 font-bold hover:underline">Reset filters</button>
+                            </>
+                          ) : (
+                            <>
+                              <FolderOpen size={48} className="opacity-20 mb-2" />
+                              <p className="text-sm font-medium italic text-blue-600/70">Upload a project XER file to view schedule data.</p>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
