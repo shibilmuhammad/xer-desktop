@@ -11,9 +11,15 @@ const safeStr = (v) => {
   return String(v);
 };
 
-const StatusBadge = ({ status }) => {
+const StatusBadge = ({ status, content }) => {
   if (!status) return null;
-  const s = String(status).toUpperCase();
+  let s = String(status).toUpperCase();
+  
+  // SPECIAL CASE: If only project boundaries (1 start, 1 finish), force SUCCESS/PASS
+  if (content?.stats?.open_start_count === 1 && content?.stats?.open_finish_count === 1) {
+    s = 'SUCCESS';
+  }
+
   const cfg = {
     PASS:    { cls: 'bg-green-100 text-green-700 border-green-200',    icon: <CheckCircle size={11} />, label: 'OK' },
     SUCCESS: { cls: 'bg-green-100 text-green-700 border-green-200',    icon: <CheckCircle size={11} />, label: 'OK' },
@@ -25,7 +31,7 @@ const StatusBadge = ({ status }) => {
   if (!badge) return null;
   
   return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border ${badge.cls}`}>
+    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border shadow-sm ${badge.cls}`}>
       {badge.icon}{badge.label}
     </span>
   );
@@ -146,14 +152,38 @@ function ListTemplate({ content }) {
           <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
             <Activity size={11} /> Key Insights
           </p>
-          <ul className="space-y-2.5">
-            {insights.map((ins, i) => (
-              <li key={i} className="flex gap-2.5 text-sm text-gray-700">
-                <CheckCircle size={14} className="text-green-500 mt-0.5 flex-shrink-0" />
-                <span className="leading-snug">{safeStr(ins)}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="space-y-3">
+            {insights.map((ins, i) => {
+              const str = safeStr(ins);
+              const match = str.match(/^\[(.*?)\]\s*(.*)/);
+              if (match) {
+                const [_, label, text] = match;
+                const labelColors = {
+                  FINDING: "text-blue-600 bg-blue-50 border-blue-100",
+                  INTERPRETATION: "text-purple-600 bg-purple-50 border-purple-100",
+                  "PRIMAVERA CONTEXT": "text-green-600 bg-green-50 border-green-100",
+                  IMPACT: "text-red-600 bg-red-50 border-red-100",
+                  RECOMMENDATION: "text-amber-600 bg-amber-50 border-amber-100"
+                };
+                const colorClass = labelColors[label] || "text-gray-600 bg-gray-50 border-gray-100";
+                
+                return (
+                  <div key={i} className="flex flex-col gap-1.5 p-3 bg-white border border-gray-100 rounded-xl shadow-sm">
+                    <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md border w-fit ${colorClass}`}>
+                      {label}
+                    </span>
+                    <span className="text-sm text-gray-700 leading-relaxed font-medium">{text}</span>
+                  </div>
+                );
+              }
+              return (
+                <div key={i} className="flex gap-2.5 text-sm text-gray-700 bg-white border border-gray-100 p-3 rounded-xl shadow-sm">
+                  <CheckCircle size={14} className="text-green-500 mt-0.5 flex-shrink-0" />
+                  <span className="leading-snug">{str}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -196,68 +226,111 @@ function IntegrityTemplate({ content }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Big Status Badge */}
-      <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-2xl border border-gray-100">
-        <StatusBadge status={logicStatus} />
-        <div className="text-sm font-medium text-gray-700 leading-snug">
+      {/* Header with Title and Status */}
+      <div className="flex flex-col gap-3 p-5 bg-gray-50 rounded-2xl border border-gray-100">
+        <div className="flex justify-between items-center">
+          <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+            <Activity size={12} className="text-blue-500" />
+            {RESPONSE_LABELS[content.type] || "Integrity Analysis"}
+          </h4>
+          <StatusBadge status={logicStatus} content={content} />
+        </div>
+        <div className="text-sm font-semibold text-gray-800 leading-relaxed pt-2 border-t border-gray-200/50">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.summary || ''}</ReactMarkdown>
         </div>
       </div>
 
-      {/* Open Ends */}
-      {(openStarts.length > 0 || openFinishes.length > 0) && (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl">
-            <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest mb-2">
-              Open Starts ({openStarts.length})
-            </p>
-            {openStarts.map((n, i) => (
-              <p key={i} className="text-xs text-gray-700 font-medium truncate">{n}</p>
-            ))}
-            {openStarts.length === 0 && <p className="text-xs text-gray-400">None</p>}
-          </div>
-          <div className="p-3 bg-green-50 border border-green-100 rounded-xl">
-            <p className="text-[9px] font-black text-green-600 uppercase tracking-widest mb-2">
-              Open Finishes ({openFinishes.length})
-            </p>
-            {openFinishes.map((n, i) => (
-              <p key={i} className="text-xs text-gray-700 font-medium truncate">{n}</p>
-            ))}
-            {openFinishes.length === 0 && <p className="text-xs text-gray-400">None</p>}
-          </div>
-        </div>
-      )}
-
-      {/* Other Checks */}
+      {/* Metrics Grid (Prioritized for Open Ends) */}
       {content.metrics && Object.keys(content.metrics).length > 0 && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-3">
           {Object.entries(content.metrics).map(([k, v]) => (
-            <div key={k} className="bg-white border border-gray-100 p-2.5 rounded-xl text-center shadow-sm">
-              <div className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">{k.replace(/([A-Z])/g, ' $1').trim()}</div>
-              <div className="text-sm font-black text-gray-800">{safeStr(v)}</div>
+            <div key={k} className="bg-blue-50 border border-blue-100 p-4 rounded-2xl shadow-sm">
+              <div className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">{k.replace(/([A-Z])/g, ' $1').trim()}</div>
+              <div className="text-2xl font-black text-blue-900 leading-none">{safeStr(v)}</div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Insights */}
+      {/* Detailed Activity Lists for Open Ends */}
+      {(openStarts.length > 0 || openFinishes.length > 0) && (
+        <div className="grid grid-cols-1 gap-3">
+          {openStarts.length > 0 && (
+            <div className="p-4 bg-white border border-gray-100 rounded-2xl shadow-sm">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                <ChevronRight size={12} className="text-blue-500" /> Open Starts ({openStarts.length})
+              </p>
+              <div className="space-y-2">
+                {openStarts.map((n, i) => (
+                  <div key={i} className="px-3 py-2 bg-gray-50 rounded-xl text-xs font-bold text-gray-700 border border-gray-100 flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span className="truncate">{n}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {openFinishes.length > 0 && (
+            <div className="p-4 bg-white border border-gray-100 rounded-2xl shadow-sm">
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                <ChevronRight size={12} className="text-green-500" /> Open Finishes ({openFinishes.length})
+              </p>
+              <div className="space-y-2">
+                {openFinishes.map((n, i) => (
+                  <div key={i} className="px-3 py-2 bg-gray-50 rounded-xl text-xs font-bold text-gray-700 border border-gray-100 flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                    <span className="truncate">{n}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Structured Insights (FINDING, INTERPRETATION, etc.) */}
       {insights.length > 0 && (
-        <ul className="space-y-2">
-          {insights.map((ins, i) => (
-            <li key={i} className="flex gap-2 text-sm text-gray-700">
-              <ChevronRight size={14} className="text-blue-400 mt-0.5 flex-shrink-0" />
-              <span>{safeStr(ins)}</span>
-            </li>
-          ))}
-        </ul>
+        <div className="space-y-3 mt-1">
+          {insights.map((ins, i) => {
+            const str = safeStr(ins);
+            const match = str.match(/^\[(.*?)\]\s*(.*)/);
+            if (match) {
+              const [_, label, text] = match;
+              const labelColors = {
+                FINDING: "text-blue-600 bg-blue-50 border-blue-100",
+                INTERPRETATION: "text-purple-600 bg-purple-50 border-purple-100",
+                "PRIMAVERA CONTEXT": "text-green-600 bg-green-50 border-green-100",
+                IMPACT: "text-red-600 bg-red-50 border-red-100",
+                RECOMMENDATION: "text-amber-600 bg-amber-50 border-amber-100"
+              };
+              const colorClass = labelColors[label] || "text-gray-600 bg-gray-50 border-gray-100";
+              
+              return (
+                <div key={i} className="flex flex-col gap-2 p-4 bg-white border border-gray-100 rounded-2xl shadow-sm ring-1 ring-black/[0.02]">
+                  <span className={`text-[9px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border w-fit shadow-xs ${colorClass}`}>
+                    {label}
+                  </span>
+                  <span className="text-[13px] text-gray-700 leading-relaxed font-semibold">{text}</span>
+                </div>
+              );
+            }
+            return (
+              <div key={i} className="flex gap-3 text-sm text-gray-700 bg-white border border-gray-100 p-4 rounded-2xl shadow-sm">
+                <CheckCircle size={16} className="text-green-500 mt-0.5 flex-shrink-0" />
+                <span className="font-medium">{str}</span>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {/* Recommendations */}
       {recs.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-2 mt-2">
           {recs.map((r, i) => (
-            <div key={i} className="flex gap-2 px-3 py-2.5 bg-amber-50 border border-amber-100 rounded-xl text-xs font-semibold text-amber-800 leading-relaxed">
-              <Zap size={10} className="text-amber-500 mt-0.5 flex-shrink-0" />{safeStr(r)}
+            <div key={i} className="flex gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-2xl text-[13px] font-bold text-amber-800 leading-relaxed shadow-sm">
+              <Zap size={14} className="text-amber-500 mt-0.5 flex-shrink-0" />
+              {safeStr(r)}
             </div>
           ))}
         </div>

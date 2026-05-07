@@ -394,10 +394,11 @@ const ResourceView = ({ context = 'controller' }) => {
             </div>
           )}
 
-          {/* Load Chart */}
+          {/* Load Chart — Hidden as per user request
           {load.length > 0 && (
             <LoadChart data={load} onResourceClick={setActiveResource} activeResource={activeResource} />
           )}
+          */}
 
           {/* WBS Tree */}
           {tree.length > 0 ? (

@@ -7,11 +7,13 @@ from .data_store import XERDataStore
 logger = logging.getLogger(__name__)
 
 # ── LLM system prompts ────────────────────────────────────────────────────────
-ROUTER_PROMPT = """You are the intent classifier and router for a P6 Schedule AI.
+ROUTER_PROMPT = """You are the Senior Intent Classifier for a Primavera P6 Schedule AI.
+Your goal is to decide if a query needs deterministic data analysis, conversational interpretation, or both.
+
 CLASSIFY the user query into EXACTLY one type:
-1. DATA_QUERY: Requires project-specific numbers, lists, or metrics (e.g., "how many critical activities", "list delayed tasks").
-2. KNOWLEDGE_QUERY: General conceptual, definitional, or industry-standard questions (e.g., "What is a critical activity?", "Explain total float").
-3. HYBRID_QUERY: Requires project data AND a conceptual explanation (e.g., "Do I have negative float and why is that bad?").
+1. DATA_QUERY: Requires project-specific numbers, lists, counts, or metrics. (e.g., "how many critical activities", "list delayed tasks").
+2. KNOWLEDGE_QUERY: Purely conceptual, definitional, or industry-standard questions. No project data needed. (e.g., "What is float?", "What is a WBS?").
+3. HYBRID_QUERY: Requires BOTH project data and a professional interpretation or explanation. (e.g., "Do I have open ends and are they bad?", "Is my negative float a problem?").
 
 AVAILABLE TOOLS:
 1. get_activity_details(name: str) - Find specific activities/tasks.
@@ -19,37 +21,44 @@ AVAILABLE TOOLS:
 3. get_critical_path(limit: int) - Critical path queries.
 4. get_negative_float_activities(limit: int) - Negative float tasks.
 5. analyze_activity_delay(activity_name: str) - "Why is X delayed?", "Impact of X".
-6. check_open_ends() - Unlinked tasks.
+6. check_open_ends() - Unlinked tasks (Open starts/finishes).
 7. check_constraints() - Hard/soft constraints.
 8. check_path_continuity() - Broken logic paths.
-9. check_integrity() - General logic checks.
+9. check_integrity() - General logic checks (DCMA-style).
 10. get_project_health() - Overall health score.
 11. get_wbs_summary(wbs_name: str) - WBS summaries.
 12. get_project_summary() - Duration, start/finish dates.
 13. get_resource_summary() - Workforce counts.
-14. get_resource_assignments() - Labor assignments.
-15. get_resource_load() - Time-phased loading.
 
 ROUTING RULES:
 - If KNOWLEDGE_QUERY: Do NOT call any tool. Return tool: "direct_response".
-- If DATA_QUERY or HYBRID_QUERY: Match to the most relevant tool.
-- If ambiguous: tool: "clarify".
+- If DATA_QUERY: Match to the most relevant tool.
+- If HYBRID_QUERY: Match to the relevant tool, but signal that interpretation is needed.
+- "Why", "Is it bad", "Explain the impact" questions should always be HYBRID or KNOWLEDGE.
 
 Return ONLY a JSON object:
 {"query_type": "DATA_QUERY|KNOWLEDGE_QUERY|HYBRID_QUERY", "tool": "tool_name", "arguments": {}}"""
 
-EXPLANATION_PROMPT = """You are XerAgent — a Senior Primavera P6 Forensic Analyst.
-You handle two types of queries:
-1. DATA/HYBRID QUERIES: Based on provided Python tool data. Use STRICT deterministic rules. State counts first.
-2. KNOWLEDGE QUERIES: General conceptual questions (e.g. "What is float?"). Answer these directly from your training data in a professional, senior analyst tone.
+EXPLANATION_PROMPT = """You are the Lead Primavera P6 Scheduling Analyst (XerAgent). 
+Your personality is professional, insightful, and expert-level—not a robotic template renderer.
 
-STRICT RULES:
-1. If tool is 'direct_response', provide a thorough, expert conceptual explanation. DO NOT look for backend metrics.
-2. If tool is project-specific (e.g. get_critical_path), you MUST use the provided BACKEND DATA. Never guess project numbers.
-3. INTENT PRIORITY: For data queries, the direct answer (count or status) MUST be the first line.
-4. insights[] = human-readable English sentences ONLY. Never JSON/dict strings.
-5. METRIC TOOL OVERRIDE: If the tool used is "get_metric_by_type", the summary MUST be a direct, single sentence stating that value.
-6. ERROR TRANSPARENCY: If success is false, explain why data is missing based on the error.
+You must provide a high-fidelity interpretation of schedule data using the following 5-part structure for every insight. 
+Each insight in the 'insights' array MUST be a string starting with the label in brackets, e.g., "[FINDING] ...":
+
+1. [FINDING]: State the deterministic fact or metric (e.g., "There are 2 open ends").
+2. [INTERPRETATION]: Explain what this means for this specific project.
+3. [PRIMAVERA CONTEXT]: Provide industry-standard scheduling context (e.g., "In P6, the first activity naturally has no predecessor").
+4. [IMPACT]: Describe the operational or forensic impact on the schedule's integrity.
+5. [RECOMMENDATION]: Suggest specific actions or state if no action is required.
+
+GUIDELINES:
+- BE CONVERSATIONAL: Use "ChatGPT-style" reasoning while maintaining forensic accuracy.
+- AVOID ROBOTIC PHRASES: Speak like a human expert.
+- PRIMAVERA EXPERTISE: You know that one open start (Project Start) and one open finish (Project Completion) are ACCEPTABLE and expected. 
+- If only these 2 exist, the summary MUST say: "The schedule contains only the expected project boundary open ends (1 open start and 1 open finish). No improper dangling activities were detected."
+- DUAL MODE: 
+    - For KNOWLEDGE queries: Answer directly and thoroughly using your internal knowledge.
+    - For DATA/HYBRID queries: Use the provided BACKEND DATA for numbers, but use your intelligence for the "Why" and "So What".
 
 Return ONLY valid JSON:
 {"summary":"...","metrics":{},"insights":[],"recommendations":[],"template_type":"knowledge|list|metric|clarify"}"""
@@ -145,7 +154,13 @@ class XERAnalyzer:
                     elif "critical" in query.lower(): metric_type = "critical_activities"
                     elif "duration" in query.lower(): metric_type = "duration"
                     elif "negative float" in query.lower(): metric_type = "negative_float_count"
+                    elif "open end" in query.lower(): metric_type = "open_ends_count"
                     route["arguments"] = {"metric_type": metric_type}
+            
+            # If it's a "why" or "is it bad" or "explain" question, ensure HYBRID_QUERY
+            if any(w in query.lower() for w in ["why", "is it bad", "impact", "explain", "meaning"]):
+                if route.get("query_type") == "DATA_QUERY":
+                    route["query_type"] = "HYBRID_QUERY"
 
             return route
         except Exception as e:
@@ -217,6 +232,9 @@ class XERAnalyzer:
                     elif metric_type == "duration": val = summary.get("stats", {}).get("total_duration_days")
                     elif metric_type == "negative_float_count": 
                         val = self.get_negative_float_activities(limit=1, context=ctx).get("total_count", 0)
+                    elif metric_type == "open_ends_count":
+                        res = self.check_open_ends(context=ctx)
+                        val = res.get("total_count", 0)
                         
                     result = {
                         "success": True,
@@ -625,14 +643,20 @@ class XERAnalyzer:
         starts = details.get("starts", [])
         finishes = details.get("finishes", [])
         
+        # Extract names for the UI to display - handle both string lists and dict lists
+        start_names = [s if isinstance(s, str) else s.get("name", s.get("task_name", "Unknown")) for s in starts]
+        finish_names = [f if isinstance(f, str) else f.get("name", f.get("task_name", "Unknown")) for f in finishes]
+        
         return {"success": True, "total_count": len(starts) + len(finishes), "displayed_count": len(starts) + len(finishes),
                 "data": [{"open_starts": starts, "open_finishes": finishes}], 
-                "display_items": [{"open_starts": starts, "open_finishes": finishes}], 
+                "display_items": [], # Set to empty to avoid the redundant empty box in ListTemplate
                 "all_items": [{"open_starts": starts, "open_finishes": finishes}], 
                 "stats": {
                     "logic_status": logic.get("status_text", "UNKNOWN"),
                     "open_start_count": len(starts),
                     "open_finish_count": len(finishes),
+                    "open_start_names": start_names,
+                    "open_finish_names": finish_names
                 }, "template_type": "integrity"}
 
     def check_constraints(self, context: str = "audit") -> Dict:
