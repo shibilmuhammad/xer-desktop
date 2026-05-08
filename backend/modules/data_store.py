@@ -111,10 +111,25 @@ class XERDataStore:
         project_df = dfs.get('project', dfs.get('PROJECT', None))
         plan_start_raw = None
         plan_end_raw = None
+        
         if project_df is not None and not project_df.empty:
-            proj_row = project_df.iloc[0]
+            # Try to find the project row that matches the tasks (XER can have multiple projects)
+            proj_id = None
+            if not dfs['tasks'].empty:
+                proj_id = dfs['tasks'].iloc[0].get('proj_id')
+            
+            proj_row = None
+            if proj_id and 'proj_id' in project_df.columns:
+                matches = project_df[project_df['proj_id'].astype(str) == str(proj_id)]
+                if not matches.empty:
+                    proj_row = matches.iloc[0]
+            
+            if proj_row is None:
+                proj_row = project_df.iloc[0]
+                
             plan_start_raw = proj_row.get('plan_start_date') or proj_row.get('last_recalc_date')
-            plan_end_raw = proj_row.get('plan_end_date')
+            # Check multiple finish date fields for "Must Finish By" or project completion
+            plan_end_raw = proj_row.get('plan_end_date') or proj_row.get('scd_end_date') or proj_row.get('finish_date')
 
         # Fallback: earliest task start date
         if not plan_start_raw and 'target_start_date' in dfs['tasks'].columns:
@@ -300,6 +315,22 @@ class XERDataStore:
         df = baseline['df']['tasks'].copy()
         df['_dt_target_end_date'] = pd.to_datetime(df['target_end_date'], errors='coerce')
         return df.set_index('task_code')['_dt_target_end_date'].to_dict()
+
+    def _get_baseline_cost_map(self, context: str = "audit") -> Dict[str, float]:
+        """Helper to get task_code -> target_cost from baseline"""
+        baseline = self.get_baseline(context=context)
+        if not baseline or 'df' not in baseline or 'tasks' not in baseline['df']:
+            return {}
+        df = baseline['df']['tasks'].copy()
+        # Check for multiple possible field names
+        cost_col = None
+        for col in ['target_cost', 'target_tot_cost', 'planned_tot_cost']:
+            if col in df.columns:
+                cost_col = col
+                break
+        
+        if not cost_col: return {}
+        return df.set_index('task_code')[cost_col].apply(lambda x: pd.to_numeric(x, errors='coerce') or 0).to_dict()
 
     def get_deterministic_analysis(self, version_id: Optional[str] = None, context: str = "audit") -> Dict:
         """
@@ -834,6 +865,26 @@ class XERDataStore:
         
         wbs_df = source['df'].get('projwbs')
         tasks_df = source['df'].get('tasks')
+        taskrsrc_df = source['df'].get('taskrsrc')
+        baseline_cost_map = self._get_baseline_cost_map(context=context)
+        
+        # Pre-aggregate TaskRSRC costs if available (Backup for missing task-level costs)
+        task_rsrc_costs = {}
+        if taskrsrc_df is not None and not taskrsrc_df.empty:
+            # Group by task_id and sum costs
+            # Common TASKRSRC cost fields: target_cost, act_reg_cost + act_ot_cost, remain_cost
+            rsrc_costs = taskrsrc_df.copy()
+            for col in ['target_cost', 'act_reg_cost', 'act_ot_cost', 'remain_cost']:
+                rsrc_costs[col] = pd.to_numeric(rsrc_costs.get(col, 0), errors='coerce').fillna(0)
+            
+            rsrc_costs['tot_act'] = rsrc_costs['act_reg_cost'] + rsrc_costs['act_ot_cost']
+            
+            agg = rsrc_costs.groupby('task_id').agg({
+                'target_cost': 'sum',
+                'tot_act': 'sum',
+                'remain_cost': 'sum'
+            })
+            task_rsrc_costs = agg.to_dict('index')
         
         if wbs_df is None: return {"records": [], "total": 0}
         
@@ -882,8 +933,58 @@ class XERDataStore:
                 tid = rec.get('task_id')
                 m = activity_metrics.get(tid, {})
                 rec['duration_days'] = round(pd.to_numeric(rec.get('target_drtn_hr_cnt', 0), errors='coerce') / hpd, 1)
+                
+                budget = pd.to_numeric(rec.get('target_cost') or rec.get('target_tot_cost') or rec.get('planned_tot_cost', 0), errors='coerce') or 0
+                actual = pd.to_numeric(rec.get('act_tot_cost') or rec.get('act_total_cost') or rec.get('actual_tot_cost', 0), errors='coerce') or 0
+                remain = pd.to_numeric(rec.get('remain_tot_cost') or rec.get('remaining_tot_cost') or rec.get('remain_total_cost', 0), errors='coerce') or 0
+                ev_cost = pd.to_numeric(rec.get('bcwp', 0), errors='coerce') or 0
+                pv_cost = pd.to_numeric(rec.get('bcws', 0), errors='coerce') or 0
+                
+                # Fallback to TaskRSRC aggregation if Task-level summary is 0
+                if budget == 0 and tid in task_rsrc_costs:
+                    budget = task_rsrc_costs[tid].get('target_cost', 0)
+                if actual == 0 and tid in task_rsrc_costs:
+                    actual = task_rsrc_costs[tid].get('tot_act', 0)
+                if remain == 0 and tid in task_rsrc_costs:
+                    remain = task_rsrc_costs[tid].get('remain_cost', 0)
+
+                bl_cost = baseline_cost_map.get(rec.get('task_code'), budget) # Fallback to budget if not in baseline
+
+                rec['budget_cost'] = budget
+                rec['actual_cost'] = actual
+                rec['remain_cost'] = remain
+                rec['ev_cost'] = ev_cost
+                rec['pv_cost'] = pv_cost
+                rec['bl_project_cost'] = bl_cost
+                rec['at_completion_cost'] = actual + remain
+                
+                # Ensure values are clean for JSON serialization
+                for k in ['budget_cost', 'actual_cost', 'remain_cost', 'ev_cost', 'pv_cost', 'bl_project_cost', 'at_completion_cost']:
+                    if pd.isna(rec.get(k)): rec[k] = 0.0
+                    else: rec[k] = float(rec[k])
+
+                # Float Processing - Prefer native P6 float if available (including 0)
+                has_native = False
+                native_float_hrs = 0
+                computed_float = rec.get('total_float', None)
+                for fld in ['total_float_hr_cnt', 'target_tf_hr_cnt', 'tf_hr_cnt']:
+                    v = rec.get(fld)
+                    if v is not None and str(v).strip() != '' and str(v).strip() != 'nan':
+                        try:
+                            native_float_hrs = float(v)
+                            has_native = True
+                            break
+                        except: continue
+
+                if has_native:
+                    final_float = round(native_float_hrs / hpd, 2)
+                else:
+                    # Fallback to internal CPM if native dates were never exported
+                    final_float = computed_float
+
                 rec['_analysis'] = {
                     'status': m.get('status_enum', 'NOT_STARTED'),
+                    'total_float': final_float,
                     'delay_days': round(m.get('delay_days', 0), 1),
                     'is_critical': m.get('is_critical_p6', False),
                     'current_end_date': str(m.get('_dt_current_end_date', '-')).split(' ')[0],
@@ -894,7 +995,6 @@ class XERDataStore:
                     'early_finish': rec.get('early_finish'),
                     'late_start': rec.get('late_start'),
                     'late_finish': rec.get('late_finish'),
-                    'total_float': rec.get('total_float'),
                     'predecessors': source.get('dependency_graph', {}).get(tid, {}).get('predecessors', []),
                     'successors': source.get('dependency_graph', {}).get(tid, {}).get('successors', [])
                 }
@@ -965,6 +1065,14 @@ class XERDataStore:
             late_finishes = []
             min_float = float('inf')
             
+            # Costs
+            budget_total = 0
+            actual_total = 0
+            remain_total = 0
+            ev_total = 0
+            pv_total = 0
+            bl_project_total = 0
+            
             # Activity Rollup — read from _analysis dict (populated after CPM)
             for act in node.get('activities', []):
                 analysis_data = act.get('_analysis', {})
@@ -978,7 +1086,19 @@ class XERDataStore:
                 if pd.notnull(ef): finishes.append(ef)
                 if pd.notnull(ls): late_starts.append(ls)
                 if pd.notnull(lf): late_finishes.append(lf)
-                if pd.notnull(f): min_float = min(min_float, f)
+                
+                # Primavera ignores COMPLETED, WBS Summary, and LOE activities when rolling up float for WBS rows
+                task_type = act.get('task_type', '')
+                if pd.notnull(f) and analysis_data.get('status') != 'COMPLETED' and task_type not in ('TT_WBS', 'TT_LOE'):
+                    min_float = min(min_float, f)
+
+                # Costs
+                budget_total += act.get('budget_cost', 0)
+                actual_total += act.get('actual_cost', 0)
+                remain_total += act.get('remain_cost', 0)
+                ev_total += act.get('ev_cost', 0)
+                pv_total += act.get('pv_cost', 0)
+                bl_project_total += act.get('bl_project_cost', 0)
             
             # Children Rollup
             for child in node.get('children', []):
@@ -989,23 +1109,50 @@ class XERDataStore:
                 if child_stats.get('late_finish'): late_finishes.append(pd.to_datetime(child_stats['late_finish']))
                 if child_stats.get('min_float') is not None: min_float = min(min_float, child_stats['min_float'])
 
-            # Calculate Summary
+                # Costs
+                budget_total += child_stats.get('budget_cost', 0)
+                actual_total += child_stats.get('actual_cost', 0)
+                remain_total += child_stats.get('remain_cost', 0)
+                ev_total += child_stats.get('ev_cost', 0)
+                pv_total += child_stats.get('pv_cost', 0)
+                bl_project_total += child_stats.get('bl_project_cost', 0)
+
+            # Calculate Summary Dates
             s = min(starts) if starts else None
             f = max(finishes) if finishes else None
+            ls_date = min(late_starts) if late_starts else None
+            lf_date = max(late_finishes) if late_finishes else None
 
-            # Duration in WORKING days, matching P6's WBS summary display using the Project Calendar.
+            # Duration in WORKING days, matching P6's WBS summary display
             dur = 0
             if s and f and f > s:
                 dur = proj_cal.workdays_between(s, f)
 
-            
+            # Primavera P6 WBS Total Float Calculation:
+            # P6 computes WBS float by comparing the summary early and late dates.
+            # By default, P6 uses "Finish Float" (Latest Late Finish - Latest Early Finish) for WBS bands.
+            wbs_float = None
+            if f and lf_date:
+                # Calculate Finish Float: Latest Late Finish - Latest Early Finish
+                # We use raw calendar days here because the user's P6 view is displaying 
+                # exact calendar day differences for WBS float (e.g., exactly 160 days from Mar 23 to Aug 30).
+                diff = (lf_date.date() - f.date()).days
+                wbs_float = float(diff)
+
             node['summary'] = {
                 'early_start': str(s.date()) if s else None,
                 'early_finish': str(f.date()) if f else None,
-                'late_start': str(min(late_starts).date()) if late_starts else None,
-                'late_finish': str(max(late_finishes).date()) if late_finishes else None,
-                'min_float': min_float if min_float != float('inf') else None,
-                'duration_days': dur
+                'late_start': str(ls_date.date()) if ls_date else None,
+                'late_finish': str(lf_date.date()) if lf_date else None,
+                'min_float': wbs_float,
+                'duration_days': dur,
+                'budget_cost': budget_total,
+                'actual_cost': actual_total,
+                'remain_cost': remain_total,
+                'ev_cost': ev_total,
+                'pv_cost': pv_total,
+                'bl_project_cost': bl_project_total,
+                'at_completion_cost': actual_total + remain_total
             }
             return node['summary']
 

@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { Search, Circle, CheckCircle, Loader2, AlertTriangle, ChevronLeft, ChevronRight, Folder, FolderOpen, ChevronDown, ChevronRight as ChevronRightIcon } from 'lucide-react';
 
+const formatCurrency = (val) => {
+  if (val === null || val === undefined) return '-';
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(val);
+};
+
 const TaskRow = React.memo(({ task, formatP6Date }) => {
   const [showDetails, setShowDetails] = useState(false);
   const analysis = task._analysis || {};
@@ -30,6 +35,7 @@ const TaskRow = React.memo(({ task, formatP6Date }) => {
     <div className="flex flex-col">
       <div className={rowClass} onClick={() => setShowDetails(!showDetails)}>
         <div className="w-24 shrink-0 px-1 text-[9px] font-black text-blue-600/70 truncate">{task.task_code}</div>
+        
         <div className="flex-1 px-2 text-[10px] font-semibold text-gray-900 truncate">{task.task_name}</div>
         <div className="w-24 shrink-0 px-1 flex justify-start">
           <span title={`Delay: ${analysis.delay_days || 0} days`} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-tight shadow-sm cursor-help ${statusConfig.color}`}>
@@ -47,6 +53,12 @@ const TaskRow = React.memo(({ task, formatP6Date }) => {
         <div className={`w-16 shrink-0 px-1 text-[10px] text-right font-black ${isNegativeFloat ? 'text-red-700' : isCritical ? 'text-red-600' : 'text-gray-500'}`}>
           {analysis.total_float != null ? Number(analysis.total_float).toFixed(2) : '-'}
         </div>
+
+        {/* Cost Columns - Moved to end */}
+        <div className="w-24 shrink-0 px-1 text-[9px] font-semibold text-gray-500 text-right">{formatCurrency(task.bl_project_cost)}</div>
+        <div className="w-24 shrink-0 px-1 text-[9px] font-semibold text-gray-700 text-right">{formatCurrency(task.budget_cost)}</div>
+        <div className="w-24 shrink-0 px-1 text-[9px] font-semibold text-green-600 text-right">{formatCurrency(task.ev_cost)}</div>
+        <div className="w-24 shrink-0 px-1 text-[9px] font-semibold text-blue-600 text-right">{formatCurrency(task.pv_cost)}</div>
       </div>
       
       {showDetails && (
@@ -167,6 +179,12 @@ const WBSTreeNode = React.memo(({ node, level, formatP6Date, defaultExpanded, sh
         <div className={`w-16 shrink-0 px-1 text-[10px] text-right font-black ${(node.summary?.min_float || 0) < 0 ? 'text-red-700' : 'text-gray-500'}`}>
           {node.summary?.min_float != null ? Number(node.summary.min_float).toFixed(2) : '-'}
         </div>
+
+        {/* Summary Cost Columns - Moved to end */}
+        <div className="w-24 shrink-0 px-1 text-[9px] font-bold text-gray-500 text-right bg-gray-50/20">{formatCurrency(node.summary?.bl_project_cost)}</div>
+        <div className="w-24 shrink-0 px-1 text-[9px] font-bold text-gray-800 text-right bg-gray-50/50">{formatCurrency(node.summary?.budget_cost)}</div>
+        <div className="w-24 shrink-0 px-1 text-[9px] font-bold text-green-700 text-right bg-green-50/20">{formatCurrency(node.summary?.ev_cost)}</div>
+        <div className="w-24 shrink-0 px-1 text-[9px] font-bold text-blue-700 text-right bg-blue-50/30">{formatCurrency(node.summary?.pv_cost)}</div>
       </div>
 
       
@@ -174,7 +192,7 @@ const WBSTreeNode = React.memo(({ node, level, formatP6Date, defaultExpanded, sh
         <div className="flex flex-col">
           {hasActivities && (
             <div className="flex flex-col border-b border-gray-200 bg-white" style={{ paddingLeft: `${((level) * 24) + 16 + 28}px` }}>
-               <div className="flex items-center py-1.5 px-2 bg-gray-50/80 border-b border-gray-200 text-[8px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-0 shadow-sm">
+                <div className="flex items-center py-1.5 px-2 bg-gray-50/80 border-b border-gray-200 text-[8px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-0 shadow-sm">
                   <div className="w-24 shrink-0 px-1">ID</div>
 
                   <div className="flex-1 px-2">Activity Name</div>
@@ -184,7 +202,11 @@ const WBSTreeNode = React.memo(({ node, level, formatP6Date, defaultExpanded, sh
                   <div className="w-20 shrink-0 px-1 text-center">EF</div>
                   <div className="w-20 shrink-0 px-1 text-center">LS</div>
                   <div className="w-20 shrink-0 px-1 text-center">LF</div>
-                  <div className="w-16 shrink-0 px-1 text-right">Float (Days)</div>
+                  <div className="w-16 shrink-0 px-1 text-right">Float</div>
+                  <div className="w-24 shrink-0 px-1 text-right">BL Project Cost</div>
+                  <div className="w-24 shrink-0 px-1 text-right">Budgeted Cost</div>
+                  <div className="w-24 shrink-0 px-1 text-right">EV Cost</div>
+                  <div className="w-24 shrink-0 px-1 text-right">PV Cost</div>
                </div>
                <div className="bg-white">
                  {node.activities.map(task => (
@@ -233,7 +255,7 @@ const ControllerTable = ({
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col min-h-full">
           <div className="flex-1 overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200 relative">
             {isHierarchy ? (
-               <div className="flex flex-col min-w-[1200px]">
+               <div className="flex flex-col min-w-[1650px]">
                  {/* Global Sticky Header for Hierarchy */}
                  <div className="flex items-center py-2.5 px-3 bg-gray-50 border-b border-gray-200 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-30 shadow-sm">
                    <div className="w-24 shrink-0 px-1">ID</div>
@@ -245,6 +267,10 @@ const ControllerTable = ({
                    <div className="w-20 shrink-0 px-1 text-center">LS</div>
                    <div className="w-20 shrink-0 px-1 text-center">LF</div>
                    <div className="w-16 shrink-0 px-1 text-right">Float</div>
+                   <div className="w-24 shrink-0 px-1 text-right">BL Project Cost</div>
+                   <div className="w-24 shrink-0 px-1 text-right">Budgeted Cost</div>
+                   <div className="w-24 shrink-0 px-1 text-right">EV Cost</div>
+                   <div className="w-24 shrink-0 px-1 text-right">PV Cost</div>
                  </div>
                  {tableData.records.length > 0 ? (
                    tableData.records.map(rootNode => (
@@ -324,7 +350,7 @@ const ControllerTable = ({
                         <td key={j} className={`px-6 py-2.5 text-xs whitespace-nowrap text-center 
                           ${key === 'task_name' || key === 'wbs_name' ? 'font-medium text-gray-900 text-left max-w-sm' : 'text-gray-600'}
                           ${['target_start_date', 'act_start_date', 'total_float_hr_cnt'].includes(key) ? 'border-l border-gray-100/50' : ''}`}>
-                          {String(row[key] || '-')}
+                          {key.includes('cost') ? formatCurrency(row[key]) : String(row[key] || '-')}
                         </td>
                       ))}
                     </tr>

@@ -118,46 +118,33 @@ const ResourceRow = ({ rsrc, indent }) => (
   </div>
 );
 
-// ── Activity Row (expandable, shows resources under it) ───────────────────────
-const ActivityNode = React.memo(({ actName, resources, indent, search }) => {
-  const [open, setOpen] = useState(!!search);
+// ── Activity Row (leaf, represents a single assignment under a Resource) ────────
+const ActivityNode = React.memo(({ actName, resources, indent }) => {
+  const rsrc = resources[0]; // Since we wrapped 1 assignment per activity in buildTree
   
-  // Auto-expand if search changes
-  useEffect(() => { if (search) setOpen(true); }, [search]);
-
-  const totalUnits = resources.reduce((s, r) => s + (r.units || 0), 0);
-
   return (
-    <div className="flex flex-col">
-      {/* Activity header */}
-      <div className="flex items-center py-1.5 px-2 border-b border-gray-100 cursor-pointer hover:bg-blue-50/40 transition-colors"
-        style={{ paddingLeft: `${indent}px` }}
-        onClick={() => setOpen(o => !o)}>
-        <div className="w-4 h-4 shrink-0 flex items-center justify-center mr-1 text-gray-400">
-          {resources.length > 0
-            ? open ? <ChevronDown size={13} /> : <ChevronRightIcon size={13} />
-            : <span className="w-3" />}
-        </div>
-        <Activity size={12} className="text-blue-500 shrink-0 mr-2" />
-        {/* Activity name */}
-        <div className="flex-1 text-[11px] font-semibold text-gray-800 truncate pr-3" title={actName}>{actName}</div>
-        {/* resource count badge */}
-        <span className="text-[9px] font-black text-blue-600 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-full shrink-0">
-          {resources.length} resource{resources.length !== 1 ? 's' : ''}
-        </span>
-        <div className="w-20 shrink-0 text-[10px] font-mono font-bold text-gray-500 text-center">{totalUnits.toFixed(1)}</div>
-        <div className="w-24 shrink-0 text-[10px] text-gray-400 text-center">{resources[0]?.start || '—'}</div>
-        <div className="w-24 shrink-0 text-[10px] text-gray-400 text-center">{resources[0]?.finish || '—'}</div>
+    <div className="flex items-center py-1.5 border-b border-gray-50 hover:bg-indigo-50/30 transition-colors group"
+      style={{ paddingLeft: `${indent}px` }}>
+      <div className="w-5 h-5 shrink-0 flex items-center justify-center mr-1">
+        <Activity size={11} className="text-blue-400" />
       </div>
-
-      {open && resources.map((r, i) => (
-        <ResourceRow key={i} rsrc={r} indent={indent + 36} />
-      ))}
+      {/* Activity name */}
+      <div className="flex-1 text-[11px] font-semibold text-gray-800 truncate pr-3" title={actName}>{actName}</div>
+      {/* Role badge */}
+      <div className="w-28 shrink-0 pr-2">
+        <span className="px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-100 text-indigo-600 text-[9px] font-black uppercase tracking-wider">{rsrc?.role || 'Labor'}</span>
+      </div>
+      {/* Units */}
+      <div className="w-20 shrink-0 text-[11px] font-mono font-bold text-gray-700 text-center">{rsrc?.units || 0}</div>
+      {/* Start */}
+      <div className="w-24 shrink-0 text-[10px] text-gray-500 text-center">{rsrc?.start || '—'}</div>
+      {/* Finish */}
+      <div className="w-24 shrink-0 text-[10px] text-gray-500 text-center">{rsrc?.finish || '—'}</div>
     </div>
   );
 });
 
-// ── WBS Tree Node (recursive, matches ControllerTable pattern) ────────────────
+// ── Tree Node (recursive, handles Categories and Resources) ────────────────
 const WBSNode = React.memo(({ node, level, search, activeResource }) => {
   const [isOpen, setIsOpen] = useState(!!search);
 
@@ -175,7 +162,7 @@ const WBSNode = React.memo(({ node, level, search, activeResource }) => {
 
   return (
     <div className="flex flex-col text-sm">
-      {/* WBS row — styled identical to ControllerTable WBSTreeNode */}
+      {/* Node row */}
       <div
         className={`flex items-center py-2 px-3 border-b border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors ${
           level === 0 ? 'bg-gray-100/80 shadow-sm sticky top-0 z-10' : 'bg-white'
@@ -192,32 +179,40 @@ const WBSNode = React.memo(({ node, level, search, activeResource }) => {
           </div>
           <span className="font-black text-[9px] text-blue-600/70 truncate">{node.wbs_short_name || ''}</span>
         </div>
-        {/* Folder + name */}
+        {/* Icon + name */}
         <div className="flex-1 px-2 flex items-center gap-2 truncate">
           <div className="text-blue-600 shrink-0">
-            {isOpen ? <FolderOpen size={15} className="fill-blue-100" /> : <Folder size={15} className="fill-blue-50" />}
+            {node.isResource ? (
+              <User size={15} className="text-indigo-500" />
+            ) : (
+              isOpen ? <FolderOpen size={15} className="fill-blue-100" /> : <Folder size={15} className="fill-blue-50" />
+            )}
           </div>
-          <span className="font-bold text-[12px] text-gray-900 truncate tracking-tight">{node.wbs_name}</span>
+          <span className={`font-bold text-[12px] truncate tracking-tight ${node.isResource ? 'text-indigo-800' : 'text-gray-900'}`}>
+            {node.wbs_name}
+          </span>
         </div>
         {/* Summary metrics */}
         <div className="shrink-0 flex items-center gap-3 pr-2">
           <span className="text-[9px] font-black text-gray-400 uppercase">
             {totalAssign} assignment{totalAssign !== 1 ? 's' : ''}
           </span>
-          <span className="text-[9px] font-black text-indigo-500 uppercase">
-            {totalRes} resource{totalRes !== 1 ? 's' : ''}
-          </span>
+          {!node.isResource && (
+            <span className="text-[9px] font-black text-indigo-500 uppercase">
+              {totalRes} resource{totalRes !== 1 ? 's' : ''}
+            </span>
+          )}
         </div>
       </div>
 
       {isOpen && (
         <div className="flex flex-col">
-          {/* Activities with their resources */}
+          {/* Activities (Assignments) */}
           {hasActivities && (
             <div className="flex flex-col bg-white" style={{ paddingLeft: `${indent + 28}px` }}>
               {/* Sub-header */}
               <div className="flex items-center py-1.5 px-2 bg-gray-50/80 border-b border-gray-200 text-[8px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-0 shadow-sm">
-                <div className="flex-1">Activity / Resource</div>
+                <div className="flex-1">Assigned Activity</div>
                 <div className="w-28 shrink-0 text-center">Role</div>
                 <div className="w-20 shrink-0 text-center">Units</div>
                 <div className="w-24 shrink-0 text-center">Start</div>
@@ -234,7 +229,7 @@ const WBSNode = React.memo(({ node, level, search, activeResource }) => {
               ))}
             </div>
           )}
-          {/* Child WBS nodes */}
+          {/* Child Nodes */}
           {hasChildren && node.children.map(child => (
             <WBSNode
               key={child.wbs_id}
@@ -250,7 +245,7 @@ const WBSNode = React.memo(({ node, level, search, activeResource }) => {
   );
 });
 
-// ── Build WBS tree from flat assignments ──────────────────────────────────────
+// ── Build Resource Tree ───────────────────────────────────────────────────────
 function buildTree(assignments, search, activeResource) {
   // Filter
   const q = search.toLowerCase();
@@ -266,37 +261,102 @@ function buildTree(assignments, search, activeResource) {
     return true;
   });
 
-  // Group: wbs_name → activity_name → [resources]
-  const wbsMap = {};
+  // Categorize
+  const getCategory = (role) => {
+    const r = (role || '').toLowerCase();
+    if (r.includes('labor') && !r.includes('non')) return 'Labor';
+    if (r.includes('material') || r.includes('mat')) return 'Material';
+    return 'Non-Labor';
+  };
+
+  const getSubCategory = (resName) => {
+    const n = (resName || '').toLowerCase();
+    if (n.includes('quality') || n.includes('qa') || n.includes('qc') || n.includes('test')) return 'Quality';
+    return 'Cost';
+  };
+
+  // Group: Category -> [SubCategory] -> Resource -> [Assignments]
+  const treeMap = {
+    'Labor': { _resources: {} },
+    'Non-Labor': { _resources: {} },
+    'Material': { 'Cost': { _resources: {} }, 'Quality': { _resources: {} } }
+  };
+
   filtered.forEach(a => {
-    const wbs = a.wbs_name || '(No WBS)';
-    if (!wbsMap[wbs]) wbsMap[wbs] = {};
-    const act = a.activity_name || a.activity_id || '(Unknown)';
-    if (!wbsMap[wbs][act]) wbsMap[wbs][act] = [];
-    wbsMap[wbs][act].push(a);
+    const cat = getCategory(a.role);
+    const resName = a.resource_name || '(Unknown Resource)';
+    let targetMap = treeMap[cat];
+    
+    if (cat === 'Material') {
+      const sub = getSubCategory(resName);
+      targetMap = treeMap[cat][sub];
+    }
+
+    if (!targetMap._resources[resName]) targetMap._resources[resName] = [];
+    targetMap._resources[resName].push(a);
   });
 
-  // Build flat node list (single-level WBS for now — hierarchy can be deep if wbs_path added later)
-  const nodes = Object.entries(wbsMap).map(([wbs, acts], i) => {
-    const activities = Object.entries(acts).map(([actName, resources]) => ({
-      activity_name: actName,
-      resources,
-    }));
-    const totalAssignments = activities.reduce((s, a) => s + a.resources.length, 0);
-    const totalResources   = new Set(activities.flatMap(a => a.resources.map(r => r.resource_name))).size;
+  // Build generic node structure recursively
+  let idCounter = 0;
+  
+  const createResourceNodes = (resMap) => {
+    return Object.entries(resMap).map(([resName, acts]) => {
+      // For a resource node, the "activities" will be the assignments
+      return {
+        wbs_id: `res_${idCounter++}`,
+        wbs_name: resName,
+        wbs_short_name: 'RSRC',
+        isResource: true, // Custom flag to change icon in UI
+        activities: acts.map(a => ({
+           activity_name: `${a.activity_id} - ${a.activity_name}`,
+           resources: [a] // wrap assignment to match existing UI structure temporarily
+        })),
+        children: [],
+        totalAssignments: acts.length,
+        totalResources: 1,
+      };
+    }).sort((a, b) => a.wbs_name.localeCompare(b.wbs_name));
+  };
+
+  const createCategoryNode = (name, data, isSub = false) => {
+    let children = [];
+    if (data._resources) {
+      children = createResourceNodes(data._resources);
+    } else {
+      children = Object.entries(data)
+        .map(([subName, subData]) => createCategoryNode(subName, subData, true))
+        .filter(Boolean);
+    }
+    
+    // Calculate totals from children
+    const totalAssign = children.reduce((sum, c) => sum + c.totalAssignments, 0);
+    const totalRes = children.reduce((sum, c) => sum + (c.isResource ? 1 : c.totalResources), 0);
+
     return {
-      wbs_id: String(i),
-      wbs_name: wbs,
-      wbs_short_name: wbs.slice(0, 8),
-      activities,
-      children: [],
-      totalAssignments,
-      totalResources,
+      wbs_id: `cat_${idCounter++}`,
+      wbs_name: name,
+      wbs_short_name: isSub ? 'TYPE' : 'CAT',
+      isCategory: true,
+      activities: [],
+      children,
+      totalAssignments: totalAssign,
+      totalResources: totalRes,
     };
-  });
+  };
+
+  const nodes = [];
+  const laborNode = createCategoryNode('Labor', treeMap['Labor']);
+  if (laborNode) nodes.push(laborNode);
+  
+  const nonLaborNode = createCategoryNode('Non-Labor', treeMap['Non-Labor']);
+  if (nonLaborNode) nodes.push(nonLaborNode);
+  
+  const materialNode = createCategoryNode('Material', treeMap['Material']);
+  if (materialNode) nodes.push(materialNode);
 
   return nodes;
 }
+
 
 // ── Main ResourceView ─────────────────────────────────────────────────────────
 const ResourceView = ({ context = 'controller' }) => {

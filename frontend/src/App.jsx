@@ -532,7 +532,12 @@ function App() {
       'target_end_date': 'Planned Finish',
       'act_start_date': 'Actual Start',
       'act_end_date': 'Actual Finish',
-      'total_float_hr_cnt': 'Total Float (h)'
+      'total_float_hr_cnt': 'Total Float (h)',
+      'budget_cost': 'Budgeted Total Cost',
+      'ev_cost': 'Earned Value Cost',
+      'pv_cost': 'Planned Value Cost',
+      'at_completion_cost': 'At Completion Cost',
+      'bl_project_cost': 'BL Project Total Cost'
     }
     return labels[key] || key.replace(/_/g, ' ').replace('hr cnt', '(hrs)').replace('pred type', 'Type').toUpperCase()
   }

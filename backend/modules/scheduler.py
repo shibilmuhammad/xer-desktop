@@ -272,8 +272,9 @@ class CPMScheduler:
                 return False
 
         real_dates = valid[valid.apply(is_real_date)]
-        # Require at least 10% of tasks to have real dates to trust primary path
-        return len(real_dates) >= max(1, len(tasks) * 0.10)
+        # Trust P6 dates if at least 1% of tasks have real scheduled dates.
+        # This prevents falling back to internal CPM for already-scheduled P6 files.
+        return len(real_dates) >= max(1, len(tasks) * 0.01)
 
     def _apply_p6_stored_dates(self, tasks: pd.DataFrame) -> pd.DataFrame:
         """
@@ -299,11 +300,12 @@ class CPMScheduler:
         tasks['late_start'] = tasks[ls_col].apply(_fmt) if ls_col else None
         tasks['late_finish'] = tasks[lf_col].apply(_fmt) if lf_col else None
 
-        # Float in days
-        if self.XER_TF in tasks.columns:
+        # Float in days — P6 stores this in hours (total_float_hr_cnt)
+        tf_col = self.XER_TF if self.XER_TF in tasks.columns else 'total_float_hr_cnt'
+        if tf_col in tasks.columns:
             tasks['total_float'] = pd.to_numeric(
-                tasks[self.XER_TF], errors='coerce'
-            ).fillna(0) / self.hours_per_day
+                tasks[tf_col], errors='coerce'
+            ) / self.hours_per_day
             tasks['total_float'] = tasks['total_float'].round(2)
         else:
             tasks['total_float'] = 0.0
