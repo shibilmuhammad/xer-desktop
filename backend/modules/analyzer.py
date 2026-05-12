@@ -20,15 +20,16 @@ AVAILABLE TOOLS:
 2. get_delayed_activities(limit: int) - List late or overdue tasks.
 3. get_critical_path(limit: int) - Critical path queries.
 4. get_negative_float_activities(limit: int) - Negative float tasks.
-5. analyze_activity_delay(activity_name: str) - "Why is X delayed?", "Impact of X".
-6. check_open_ends() - Unlinked tasks (Open starts/finishes).
-7. check_constraints() - Hard/soft constraints.
-8. check_path_continuity() - Broken logic paths.
-9. check_integrity() - General logic checks (DCMA-style).
-10. get_project_health() - Overall health score.
-11. get_wbs_summary(wbs_name: str) - WBS summaries.
-12. get_project_summary() - Duration, start/finish dates.
-13. get_resource_summary() - Workforce counts.
+5. get_positive_float_activities(limit: int) - Positive float (slack) tasks.
+6. analyze_activity_delay(activity_name: str) - "Why is X delayed?", "Impact of X".
+7. check_open_ends() - Unlinked tasks (Open starts/finishes).
+8. check_constraints() - Hard/soft constraints.
+9. check_path_continuity() - Broken logic paths.
+10. check_integrity() - General logic checks (DCMA-style).
+11. get_project_health() - Overall health score.
+12. get_wbs_summary(wbs_name: str) - WBS summaries.
+13. get_project_summary() - Duration, start/finish dates.
+14. get_resource_summary() - Workforce counts.
 
 ROUTING RULES:
 - If KNOWLEDGE_QUERY: Do NOT call any tool. Return tool: "direct_response".
@@ -153,7 +154,8 @@ class XERAnalyzer:
                     if "non" in query.lower() and "critical" in query.lower(): metric_type = "non_critical_activities"
                     elif "critical" in query.lower(): metric_type = "critical_activities"
                     elif "duration" in query.lower(): metric_type = "duration"
-                    elif "negative float" in query.lower(): metric_type = "negative_float_count"
+                    elif "negative float" in query.lower() or "neg float" in query.lower(): metric_type = "negative_float_count"
+                    elif "positive float" in query.lower() or "posetive float" in query.lower() or "pos float" in query.lower(): metric_type = "positive_float_count"
                     elif "open end" in query.lower(): metric_type = "open_ends_count"
                     route["arguments"] = {"metric_type": metric_type}
             
@@ -161,6 +163,13 @@ class XERAnalyzer:
             if any(w in query.lower() for w in ["why", "is it bad", "impact", "explain", "meaning"]):
                 if route.get("query_type") == "DATA_QUERY":
                     route["query_type"] = "HYBRID_QUERY"
+
+            # SAFETY FALLBACK: If routed to activity search but mentions float, redirect to float tools
+            if "float" in query.lower() and route.get("tool") == "get_activity_details":
+                if "negative" in query.lower() or "neg " in query.lower():
+                    route["tool"] = "get_negative_float_activities"
+                elif "positive" in query.lower() or "posetive" in query.lower() or "pos " in query.lower():
+                    route["tool"] = "get_positive_float_activities"
 
             return route
         except Exception as e:
@@ -200,6 +209,8 @@ class XERAnalyzer:
             result = self.get_critical_path(limit=args.get("limit", 20), context=ctx, wbs_filter=selected_wbs)
         elif tool == "get_negative_float_activities":
             result = self.get_negative_float_activities(limit=args.get("limit", 20), context=ctx, wbs_filter=selected_wbs)
+        elif tool == "get_positive_float_activities":
+            result = self.get_positive_float_activities(limit=args.get("limit", 20), context=ctx, wbs_filter=selected_wbs)
         elif tool == "check_open_ended_tasks" or tool == "check_open_ends":
             result = self.check_open_ends(context=ctx)
         elif tool == "check_critical_path_continuity" or tool == "check_path_continuity":
@@ -232,6 +243,8 @@ class XERAnalyzer:
                     elif metric_type == "duration": val = summary.get("stats", {}).get("total_duration_days")
                     elif metric_type == "negative_float_count": 
                         val = self.get_negative_float_activities(limit=1, context=ctx).get("total_count", 0)
+                    elif metric_type == "positive_float_count":
+                        val = self.get_positive_float_activities(limit=1, context=ctx).get("total_count", 0)
                     elif metric_type == "open_ends_count":
                         res = self.check_open_ends(context=ctx)
                         val = res.get("total_count", 0)
@@ -523,6 +536,28 @@ class XERAnalyzer:
         return {"success": True, "total_count": len(full_data), "displayed_count": len(preview_data),
                 "is_truncated": len(full_data) > limit, "data": preview_data, "display_items": preview_data, "all_items": full_data, "data_ref": data_ref,
                 "stats": {"worst_float_days": round(min(floats), 1) if floats else 0}}
+
+    def get_positive_float_activities(self, limit: int = 20, context: str = "audit", wbs_filter: Optional[str] = None) -> Dict:
+        analysis = self.data_store.get_deterministic_analysis(context=context)
+        source = self.data_store.get_latest(context=context)
+        acts = analysis.get("activityAnalysis", {})
+        acts = self._filter_wbs(acts, wbs_filter, source)
+        
+        pos = {tid: a for tid, a in acts.items() if a.get("float_hrs", 0) > 0 and a.get("status_enum") != "COMPLETED"}
+        sorted_acts = sorted(pos.items(), key=lambda x: x[1].get("float_hrs", 0), reverse=True)
+        hpd = source.get("hours_per_day", 8) if source else 8
+        
+        full_data = [{"id": tid, "code": a.get("task_code",""), "name": a.get("task_name",""),
+                      "float_days": round(a.get("float_hrs", 0) / hpd, 1),
+                      "delay_days": a.get("delay_days", 0)} for tid, a in sorted_acts]
+        
+        data_ref = self.data_store.store_result(full_data)
+        preview_data = full_data[:limit]
+        floats = [a.get("float_hrs", 0) / hpd for a in pos.values()]
+        
+        return {"success": True, "total_count": len(full_data), "displayed_count": len(preview_data),
+                "is_truncated": len(full_data) > limit, "data": preview_data, "display_items": preview_data, "all_items": full_data, "data_ref": data_ref,
+                "stats": {"max_float_days": round(max(floats), 1) if floats else 0}}
 
     def get_project_health(self, context: str = "audit") -> Dict:
         analysis = self.data_store.get_deterministic_analysis(context=context)

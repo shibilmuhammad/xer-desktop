@@ -18,6 +18,7 @@ const RESPONSE_LABELS = {
   get_critical_activities: "Critical Path Analysis",
   get_delayed_activities: "Delayed Activities",
   get_negative_float_activities: "Negative Float Analysis",
+  get_positive_float_activities: "Positive Float Analysis",
   check_integrity: "Logic Integrity Check",
   check_open_ends: "Open Ends Analysis",
   check_open_ended_tasks: "Open Ends Analysis",
