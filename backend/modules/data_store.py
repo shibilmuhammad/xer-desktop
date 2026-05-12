@@ -304,6 +304,10 @@ class XERDataStore:
         stats['topDrivers'] = summary.get('topDrivers', [])
         stats['topRisks'] = summary.get('topRisks', [])
 
+        # Override the stats with the more robust deterministic analysis calculation
+        stats['critical_count'] = health_metrics.get('criticalCount', stats.get('critical_count', 0))
+        stats['negative_float_count'] = health_metrics.get('negativeFloatCount', stats.get('negative_float_count', 0))
+
         self._cached_stats[context] = stats
         return stats
 
@@ -625,6 +629,7 @@ class XERDataStore:
             "notStartedTasks": len(df[df['status_enum'] == "NOT_STARTED"]),
             "delayedTasks": len(df[df['delay_days'] > 0]),
             "criticalCount": critical_count,
+            "negativeFloatCount": neg_float_count,
             "projectHealthScore": score,
             "healthStatus": health_status,
             "isConstrained": is_constrained,

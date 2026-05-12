@@ -60,6 +60,7 @@ GUIDELINES:
 - DUAL MODE: 
     - For KNOWLEDGE queries: Answer directly and thoroughly using your internal knowledge.
     - For DATA/HYBRID queries: Use the provided BACKEND DATA for numbers, but use your intelligence for the "Why" and "So What".
+- NOTE ON CRITICAL PATH: Any task with float <= 0 is considered critical. Do not assume tasks are missing or invalid if float is 0.
 
 Return ONLY valid JSON:
 {"summary":"...","metrics":{},"insights":[],"recommendations":[],"template_type":"knowledge|list|metric|clarify"}"""
@@ -292,11 +293,16 @@ class XERAnalyzer:
                 "template_type": "clarify"
             }
 
-        history_ctx = [{"role": "user", "content": h["user"]} for h in session["history"][-2:]]
+        history_ctx = []
+        for h in session["history"][-2:]:
+            history_ctx.append({"role": "user", "content": h["user"]})
+            if h.get("assistant"):
+                history_ctx.append({"role": "assistant", "content": h["assistant"]})
 
         # Truncation for UI and Token optimization
         optim_tool_result = tool_result.copy()
-        full_data = tool_result.get("data", [])
+        # Ensure we grab the real full data if the tool provided it via all_items
+        full_data = tool_result.get("all_items", tool_result.get("data", []))
         total_count = tool_result.get("total_count", len(full_data))
         
         limit = 20
@@ -305,7 +311,7 @@ class XERAnalyzer:
         if is_truncated:
             optim_tool_result["data"] = full_data[:limit]
             optim_tool_result["is_truncated"] = True
-            optim_tool_result["displayed_count"] = limit
+            optim_tool_result["displayed_count"] = len(optim_tool_result["data"])
             optim_tool_result["total_count"] = total_count
             optim_tool_result["all_items"] = full_data  # Keep for modal
         else:
@@ -313,11 +319,18 @@ class XERAnalyzer:
             optim_tool_result["displayed_count"] = total_count
             optim_tool_result["all_items"] = full_data
 
+        payload_to_llm = {
+            "total_activities_found": total_count,
+            "preview_items_provided": len(optim_tool_result["data"]),
+            "stats": tool_result.get("stats", {}),
+            "data": optim_tool_result["data"]
+        }
+
         user_msg = (
             f'Query: "{query}"\n'
             f'Tool Executed: {tool_result["tool"]}\n'
-            f'BACKEND DATA (showing {len(optim_tool_result["data"])} of {total_count} items):\n'
-            f'{json.dumps(optim_tool_result["data"], default=str)}'
+            f'BACKEND DATA:\n'
+            f'{json.dumps(payload_to_llm, default=str)}'
         )
 
         messages = [{"role": "system", "content": EXPLANATION_PROMPT}]
