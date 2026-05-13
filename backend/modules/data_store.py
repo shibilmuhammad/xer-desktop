@@ -349,24 +349,42 @@ class XERDataStore:
         baseline_map = self._get_baseline_map(context=context)
         
         # 1. Normalize & Pre-process
+        # Support multiple P6 field name variations for dates
+        date_mapping = {
+            '_dt_target_start_date': ['target_start_date', 'plan_start_date', 'start_date'],
+            '_dt_target_end_date': ['target_end_date', 'plan_end_date', 'finish_date', 'scd_end_date'],
+            '_dt_act_start_date': ['act_start_date', 'actual_start_date', 'as_date'],
+            '_dt_act_end_date': ['act_end_date', 'actual_finish_date', 'af_date']
+        }
+        
+        for internal_col, xer_cols in date_mapping.items():
+            val = None
+            for col in xer_cols:
+                if col in df.columns:
+                    val = pd.to_datetime(df[col], errors='coerce')
+                    break
+            df[internal_col] = val
+
         # Priority: CPM-computed 'total_float' (days) > XER stored 'total_float_hr_cnt' (hours)
         hpd = source.get('hours_per_day', 8.0)
         if 'total_float' in df.columns and df['total_float'].notna().any():
             # CPM output: already in days
             df['float_days'] = pd.to_numeric(df['total_float'], errors='coerce').fillna(0)
             df['float_hrs'] = df['float_days'] * hpd
-        elif 'total_float_hr_cnt' in df.columns:
-            # XER stored value: in hours
-            df['float_hrs'] = pd.to_numeric(df['total_float_hr_cnt'], errors='coerce').fillna(0)
-            df['float_days'] = df['float_hrs'] / hpd
         else:
-            df['float_hrs'] = 0.0
-            df['float_days'] = 0.0
-        
-        date_cols = ['target_start_date', 'target_end_date', 'act_start_date', 'act_end_date']
-        for col in date_cols:
-            if col in df.columns:
-                df[f'_dt_{col}'] = pd.to_datetime(df[col], errors='coerce')
+            # Try to find a float column
+            float_col = None
+            for col in ['total_float_hr_cnt', 'target_tf_hr_cnt', 'tf_hr_cnt']:
+                if col in df.columns:
+                    float_col = col
+                    break
+            
+            if float_col:
+                df['float_hrs'] = pd.to_numeric(df[float_col], errors='coerce').fillna(0)
+                df['float_days'] = df['float_hrs'] / hpd
+            else:
+                df['float_hrs'] = 0.0
+                df['float_days'] = 0.0
 
         # 2. Status Calculation
         def calc_status(row):
@@ -868,7 +886,7 @@ class XERDataStore:
         source = self.get_version(source_id, context=context)
         if not source or 'df' not in source: return {"records": [], "total": 0}
         
-        wbs_df = source['df'].get('projwbs')
+        wbs_df = source['df'].get('projwbs', source['df'].get('wbs'))
         tasks_df = source['df'].get('tasks')
         taskrsrc_df = source['df'].get('taskrsrc')
         baseline_cost_map = self._get_baseline_cost_map(context=context)
@@ -987,39 +1005,59 @@ class XERDataStore:
                     # Fallback to internal CPM if native dates were never exported
                     final_float = computed_float
 
-                rec['_analysis'] = {
+                # Safe float helper
+                def safe_float(v):
+                    if pd.isna(v) or v is None: return 0.0
+                    try: return float(v)
+                    except: return 0.0
+
+                # Final Record Sanitization (Remove NaNs for JSON safety)
+                clean_rec = {}
+                for k, v in rec.items():
+                    if k == '_analysis': continue # Handled below
+                    if pd.isna(v) or v == 'nan': clean_rec[k] = ""
+                    else: clean_rec[k] = v
+
+                clean_rec['_analysis'] = {
                     'status': m.get('status_enum', 'NOT_STARTED'),
-                    'total_float': final_float,
-                    'delay_days': round(m.get('delay_days', 0), 1),
+                    'total_float': safe_float(final_float),
+                    'delay_days': safe_float(m.get('delay_days', 0)),
                     'is_critical': m.get('is_critical_p6', False),
                     'current_end_date': str(m.get('_dt_current_end_date', '-')).split(' ')[0],
                     'is_predicted': m.get('is_predicted_date', False),
-                    'float_hrs': m.get('float_hrs', 0),
+                    'float_hrs': safe_float(m.get('float_hrs', 0)),
                     'delay_float_category': m.get('delay_float_category', 'SAFE'),
-                    'early_start': rec.get('early_start'),
-                    'early_finish': rec.get('early_finish'),
-                    'late_start': rec.get('late_start'),
-                    'late_finish': rec.get('late_finish'),
+                    'early_start': clean_rec.get('early_start') or clean_rec.get('early_start_date') or clean_rec.get('es_date') or "",
+                    'early_finish': clean_rec.get('early_finish') or clean_rec.get('early_end_date') or clean_rec.get('ef_date') or "",
+                    'late_start': clean_rec.get('late_start') or clean_rec.get('late_start_date') or clean_rec.get('ls_date') or "",
+                    'late_finish': clean_rec.get('late_finish') or clean_rec.get('late_end_date') or clean_rec.get('lf_date') or "",
                     'predecessors': source.get('dependency_graph', {}).get(tid, {}).get('predecessors', []),
                     'successors': source.get('dependency_graph', {}).get(tid, {}).get('successors', [])
                 }
-                tasks.append(rec)
+                tasks.append(clean_rec)
                 
-        # 2. Group tasks by wbs_id
+        # 2. Group tasks by wbs_id (ensure string keys for mapping)
         wbs_tasks = {}
+        unassigned_tasks = []
         for t in tasks:
             wid = t.get('wbs_id')
-            if wid not in wbs_tasks: wbs_tasks[wid] = []
-            wbs_tasks[wid].append(t)
+            if pd.isna(wid) or wid == 'nan' or wid is None:
+                unassigned_tasks.append(t)
+                continue
+            
+            wid_str = str(wid)
+            if wid_str not in wbs_tasks: wbs_tasks[wid_str] = []
+            wbs_tasks[wid_str].append(t)
             
         # 3. Build WBS Node Dictionary
         wbs_nodes = {}
         for rec in wbs_df.to_dict('records'):
-            wid = rec.get('wbs_id')
+            wid = str(rec.get('wbs_id'))
             pid = rec.get('parent_wbs_id')
-            if pd.isna(pid) or pid == 'nan': pid = None
+            if pd.isna(pid) or str(pid) == 'nan' or pid is None: pid = None
+            else: pid = str(pid)
             
-            # Clean floats from nans
+            # Clean values
             for k, v in rec.items():
                 if pd.isna(v): rec[k] = None
                 
@@ -1038,6 +1076,25 @@ class XERDataStore:
                 wbs_nodes[pid]['children'].append(node)
             else:
                 tree.append(node)
+
+        # 5. Handle Unassigned Activities or Orphaned Tasks
+        # If we have tasks whose WBS isn't in the tree, or tasks with no WBS at all
+        orphaned_wids = [wid for wid in wbs_tasks if wid not in wbs_nodes]
+        all_orphans = unassigned_tasks.copy()
+        for wid in orphaned_wids:
+            all_orphans.extend(wbs_tasks[wid])
+
+        if all_orphans:
+            # Create a virtual root for orphaned/unassigned work
+            virtual_root = {
+                "wbs_id": "virtual_root",
+                "wbs_name": "General Project Activities",
+                "wbs_short_name": "GENERAL",
+                "parent_wbs_id": None,
+                "children": [],
+                "activities": all_orphans
+            }
+            tree.append(virtual_root)
                 
         # 5. Prune empty branches
         def prune(node):
@@ -1139,10 +1196,11 @@ class XERDataStore:
             wbs_float = None
             if f and lf_date:
                 # Calculate Finish Float: Latest Late Finish - Latest Early Finish
-                # We use raw calendar days here because the user's P6 view is displaying 
-                # exact calendar day differences for WBS float (e.g., exactly 160 days from Mar 23 to Aug 30).
                 diff = (lf_date.date() - f.date()).days
                 wbs_float = float(diff)
+            
+            if wbs_float is not None and (pd.isna(wbs_float) or wbs_float == float('inf')):
+                wbs_float = 0.0
 
             node['summary'] = {
                 'early_start': str(s.date()) if s else None,

@@ -242,7 +242,8 @@ const ControllerTable = ({
   setTablePage, 
   formatP6Date, 
   getHeaderLabel,
-  hasProject
+  hasProject,
+  isTableLoading
 }) => {
   const isHierarchy = tableData.table === 'HIERARCHY';
   const showActivities = viewerTable === 'TASK';
@@ -251,8 +252,14 @@ const ControllerTable = ({
 
   return (
     <>
-      <div className="flex-1 overflow-auto px-8 py-4">
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col min-h-full">
+      <div className="flex-1 overflow-auto px-8 py-4 relative">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col min-h-full relative">
+          {isTableLoading && (
+            <div className="absolute inset-0 z-50 bg-white/70 backdrop-blur-[2px] flex flex-col items-center justify-center animate-in fade-in duration-200">
+              <Loader2 size={32} className="text-blue-500 animate-spin mb-3" />
+              <p className="text-sm font-bold text-gray-700 tracking-tight">Fetching Table Data...</p>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-gray-200 relative">
             {isHierarchy ? (
                <div className="flex flex-col min-w-[1650px]">

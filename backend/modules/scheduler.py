@@ -346,11 +346,15 @@ class CPMScheduler:
         cal_id_map: Dict[str, Any] = {}
         for _, row in tasks.iterrows():
             tid = row['task_id']
-            hrs = pd.to_numeric(row.get('target_drtn_hr_cnt', 0), errors='coerce') or 0.0
+            # Improved duration extraction with NaN protection
+            dur_hr = pd.to_numeric(row.get('target_drtn_hr_cnt', row.get('remain_drtn_hr_cnt', 0)), errors='coerce')
+            if pd.isna(dur_hr): dur_hr = 0.0
+            
             cid = row.get('clndr_id', '')
             cal = self._get_calendar(cal_map, cid)
             cal_id_map[tid] = cid
-            dur[tid] = hrs / cal.hours_per_day if cal.hours_per_day > 0 else hrs / self.hours_per_day
+            hpd = cal.hours_per_day if cal.hours_per_day > 0 else self.hours_per_day
+            dur[tid] = float(dur_hr / hpd)
 
         # Build adjacency
         successors: Dict[str, List] = {tid: [] for tid in task_ids}
@@ -367,8 +371,34 @@ class CPMScheduler:
                 predecessors[sid].append((pid, rtype, lag))
 
         # ES/EF stored as datetime
-        ES: Dict[str, datetime] = {tid: project_start for tid in task_ids}
+        ES: Dict[str, datetime] = {}
         EF: Dict[str, datetime] = {}
+        
+        # Determine effective start point
+        # For updates, we MUST anchor to the Data Date.
+        # If no Data Date, use project start.
+        anchor_date = data_date.to_pydatetime() if data_date else project_start.to_pydatetime()
+
+        # Initial pass: Handle Completed and In-Progress tasks
+        for _, row in tasks.iterrows():
+            tid = row['task_id']
+            status = str(row.get('status_code', row.get('task_status', 'TK_NotStart')))
+            
+            as_raw = row.get('act_start_date', row.get('actual_start_date'))
+            af_raw = row.get('act_end_date', row.get('actual_finish_date'))
+            
+            # If task is COMPLETED, use actuals
+            if status == 'TK_Complete' and not pd.isnull(af_raw):
+                ES[tid] = pd.to_datetime(as_raw).to_pydatetime()
+                EF[tid] = pd.to_datetime(af_raw).to_pydatetime()
+            # If task is IN PROGRESS, it started in the past but ends in the future
+            elif status == 'TK_Active' and not pd.isnull(as_raw):
+                ES[tid] = pd.to_datetime(as_raw).to_pydatetime()
+                # EF will be calculated from duration starting at data_date (approx)
+                # But for now, we'll let the forward pass handle the finish
+            else:
+                # Default for unstarted tasks
+                ES[tid] = anchor_date
 
         # ---- Forward Pass ----
         in_degree = {tid: len(predecessors[tid]) for tid in task_ids}
@@ -384,29 +414,39 @@ class CPMScheduler:
             processed.add(pid)
 
             cal = self._get_calendar(cal_map, cal_id_map[pid])
-            es = self._ensure_workday(ES[pid], cal)
-            ef = self._add_duration(es, dur[pid], cal)
-            ES[pid] = es
-            EF[pid] = ef
+            
+            # If we don't have a fixed EF yet (not completed)
+            if pid not in EF:
+                es = self._ensure_workday(ES[pid], cal)
+                # Ensure unstarted tasks don't start before anchor
+                if str(tasks.loc[tasks['task_id'] == pid, 'status_code'].values[0]) != 'TK_Complete':
+                    es = max(es, anchor_date)
+                
+                ef = self._add_duration(es, dur[pid], cal)
+                ES[pid] = es
+                EF[pid] = ef
 
             for sid, rtype, lag in successors[pid]:
                 candidate = self._forward_constraint(
                     rtype, lag, ES[pid], EF[pid],
                     dur[sid], cal_map, cal_id_map[sid]
                 )
-                if sid not in EF:  # not yet processed
-                    if candidate > ES[sid]:
-                        ES[sid] = candidate
+                # Successor ES must be at least the candidate date
+                if sid not in ES or candidate > ES[sid]:
+                    ES[sid] = candidate
 
                 in_degree[sid] -= 1
                 if in_degree[sid] == 0:
                     queue.append(sid)
 
-        # Compute EF for any remaining
+        # Compute EF for any remaining (orphans)
         for tid in task_ids:
             if tid not in EF:
                 cal = self._get_calendar(cal_map, cal_id_map[tid])
                 es = self._ensure_workday(ES[tid], cal)
+                # Anchor unstarted orphans
+                if str(tasks.loc[tasks['task_id'] == tid, 'status_code'].values[0]) != 'TK_Complete':
+                    es = max(es, anchor_date)
                 ES[tid] = es
                 EF[tid] = self._add_duration(es, dur[tid], cal)
 
@@ -516,6 +556,11 @@ class CPMScheduler:
             # Float in working days
             cal = self._get_calendar(cal_map, cal_id_map[tid])
             tf_days = self._working_days_diff(es, ls, cal)
+            
+            # Safe float rounding
+            final_tf = 0.0
+            if not pd.isna(tf_days):
+                final_tf = round(float(tf_days), 2)
 
             results.append({
                 'task_id': tid,
@@ -523,7 +568,7 @@ class CPMScheduler:
                 'early_finish': fmt(ef),
                 'late_start': fmt(ls),
                 'late_finish': fmt(lf),
-                'total_float': round(tf_days, 2),
+                'total_float': final_tf,
             })
 
         results_df = pd.DataFrame(results)

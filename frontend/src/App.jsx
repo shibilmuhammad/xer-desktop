@@ -30,6 +30,7 @@ function App() {
   const [auditStats, setAuditStats] = useState(null)
   const [controllerStats, setControllerStats] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [isTableLoading, setIsTableLoading] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
   const [viewMode, setViewMode] = useState('audit') // 'audit' or 'controller'
   const [viewerTable, setViewerTable] = useState('TASK')
@@ -114,6 +115,7 @@ function App() {
     setLoading(true)
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('file_type', type)
     formData.append('context', viewMode)
     
     try {
@@ -147,10 +149,13 @@ function App() {
       const selectedId = viewMode === 'audit' ? selectedAuditVersionId : selectedControllerVersionId
       if (!selectedId) return
 
+      setIsTableLoading(true)
       const res = await axios.get(`/api/xer-data?table=${reqTable}&page=${tablePage}&search=${tableSearch}&version_id=${selectedId}&filter=${viewerFilter}&context=${viewMode}`)
       setTableData(res.data)
     } catch (err) {
       console.error('Failed to fetch table data', err)
+    } finally {
+      setIsTableLoading(false)
     }
   }
 
@@ -430,31 +435,36 @@ function App() {
     
     try {
       await axios.delete(`/api/versions/${versionId}?context=${viewMode}`)
+      
+      // Always refresh the versions list from the backend
+      const res = await axios.get(`/api/versions?context=${viewMode}`)
+      const updatedVersions = res.data
+      
       if (viewMode === 'audit') {
-        if (versionId.startsWith('baseline')) {
-          setAuditBaselineLoaded(false)
-          setAuditVersions([])
+        setAuditVersions(updatedVersions)
+        const hasBaseline = updatedVersions.some(v => v.type === 'baseline')
+        setAuditBaselineLoaded(hasBaseline)
+        
+        if (selectedAuditVersionId === versionId) {
+          setSelectedAuditVersionId(updatedVersions.find(v => v.type === 'baseline')?.id || updatedVersions[0]?.id || null)
+        }
+        if (!hasBaseline) {
           setAuditStats(null)
           setMessages([])
-          setSelectedAuditVersionId(null)
-        } else {
-          fetchVersions('audit')
-          if (selectedAuditVersionId === versionId) {
-            setSelectedAuditVersionId(auditVersions.find(v => v.type === 'baseline')?.id || null)
-          }
+          setTableData({ records: [], total: 0 })
         }
       } else {
-        if (versionId.startsWith('baseline')) {
-          setControllerBaselineLoaded(false)
-          setControllerVersions([])
+        setControllerVersions(updatedVersions)
+        const hasBaseline = updatedVersions.some(v => v.type === 'baseline')
+        setControllerBaselineLoaded(hasBaseline)
+        
+        if (selectedControllerVersionId === versionId) {
+          setSelectedControllerVersionId(updatedVersions.find(v => v.type === 'baseline')?.id || updatedVersions[0]?.id || null)
+        }
+        if (!hasBaseline) {
           setControllerStats(null)
           setControllerMessages([])
-          setSelectedControllerVersionId(null)
-        } else {
-          fetchVersions('controller')
-          if (selectedControllerVersionId === versionId) {
-            setSelectedControllerVersionId(controllerVersions.find(v => v.type === 'baseline')?.id || null)
-          }
+          setTableData({ records: [], total: 0 })
         }
       }
     } catch (err) {
@@ -570,7 +580,10 @@ function App() {
           <span className="text-gray-300">|</span>
           <span className="font-medium text-gray-600">Period:</span>
           <span className="font-bold text-gray-900">
-            {viewMode === 'audit' ? `${auditStats?.project_start} to ${auditStats?.project_finish}` : `${controllerStats?.project_start} to ${controllerStats?.project_finish}`}
+            {viewMode === 'audit' 
+              ? (auditStats?.project_start ? `${auditStats.project_start} to ${auditStats.project_finish}` : 'Not Available') 
+              : (controllerStats?.project_start ? `${controllerStats.project_start} to ${controllerStats.project_finish}` : 'Not Available')
+            }
           </span>
         </div>
 
@@ -640,6 +653,7 @@ function App() {
                 formatP6Date={formatP6Date}
                 getHeaderLabel={getHeaderLabel}
                 hasProject={controllerBaselineLoaded}
+                isTableLoading={isTableLoading}
               />
             )}
             
